@@ -44,6 +44,7 @@ pallas-codec = "1.4"
 proptest = "1"
 rayon = "1"
 rusqlite = { version = "0.40", features = ["bundled", "fallible_uint", "load_extension"] }
+schemars = "1.2.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tar = "0.4"

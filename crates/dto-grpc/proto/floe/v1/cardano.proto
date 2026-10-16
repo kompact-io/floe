@@ -1,9 +1,8 @@
-// floe's own fork of UTxORPC's `cardano.proto`, not the vendored spec
-// file (see `docs/utxorpc-spec/utxorpc/v1/cardano/cardano.proto` for
-// the pristine upstream copy, kept only as a diff baseline -- see
-// `docs/utxorpc-divergences.md`). As of this fork, textually
-// identical to upstream (package line aside): the chain-specific
-// message set floe converts into hasn't needed to diverge.
+// floe's own fork of UTxORPC's `cardano.proto`. As of this fork,
+// textually identical to upstream (package line aside): the
+// chain-specific message set floe converts into hasn't needed to
+// diverge. Where a future divergence lands, it gets commented inline
+// on the diverging field itself, not in a separate doc.
 
 syntax = "proto3";
 

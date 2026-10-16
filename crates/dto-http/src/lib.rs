@@ -30,6 +30,8 @@ use minicbor::encode::{Encoder, Error as EncodeError, Write as CborWrite};
 #[cfg(feature = "cbor")]
 use minicbor::{Decode, Encode};
 use pallas_addresses::Address;
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 #[cfg(feature = "json")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -100,6 +102,7 @@ fn de_hex_array_opt<'de, D: Deserializer<'de>, const N: usize>(
 /// regardless of which wire-format features are enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 #[cfg_attr(feature = "json", serde(rename_all = "snake_case"))]
 #[cfg_attr(feature = "cbor", cbor(index_only))]
@@ -126,6 +129,7 @@ pub enum ScriptLang {
 /// genesis/era data floe doesn't track, see `TODO.md`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct ChainPointDto {
     #[cfg_attr(feature = "cbor", n(0))]
@@ -134,6 +138,7 @@ pub struct ChainPointDto {
         feature = "json",
         serde(serialize_with = "ser_hex", deserialize_with = "de_hex_vec")
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     #[cfg_attr(feature = "cbor", n(1), cbor(with = "minicbor::bytes"))]
     pub hash: Vec<u8>,
     #[cfg_attr(feature = "cbor", n(2))]
@@ -144,12 +149,14 @@ pub struct ChainPointDto {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct AssetDto {
     #[cfg_attr(
         feature = "json",
         serde(serialize_with = "ser_hex", deserialize_with = "de_hex_vec")
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     #[cfg_attr(feature = "cbor", n(0), cbor(with = "minicbor::bytes"))]
     pub name: Vec<u8>,
     /// A live output's held quantity (`PositiveCoin`, same as
@@ -161,12 +168,14 @@ pub struct AssetDto {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct MultiassetDto {
     #[cfg_attr(
         feature = "json",
         serde(serialize_with = "ser_hex", deserialize_with = "de_hex_vec")
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     #[cfg_attr(feature = "cbor", n(0), cbor(with = "minicbor::bytes"))]
     pub policy_id: Vec<u8>,
     #[cfg_attr(feature = "cbor", n(1))]
@@ -181,12 +190,14 @@ pub struct MultiassetDto {
 /// `HashResolved`/`Inline`.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct DatumDto {
     #[cfg_attr(
         feature = "json",
         serde(serialize_with = "ser_hex", deserialize_with = "de_hex_array")
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     #[cfg_attr(feature = "cbor", n(0), cbor(with = "minicbor::bytes"))]
     pub hash: [u8; 32],
     #[cfg_attr(
@@ -198,6 +209,7 @@ pub struct DatumDto {
             default
         )
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<String>"))]
     #[cfg_attr(feature = "cbor", n(1), cbor(with = "minicbor::bytes"))]
     pub original_cbor: Option<Vec<u8>>,
 }
@@ -206,6 +218,7 @@ pub struct DatumDto {
 /// `NativeScript` decode (see module doc); lossless either way.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct ScriptDto {
     #[cfg_attr(feature = "cbor", n(0))]
@@ -214,6 +227,7 @@ pub struct ScriptDto {
         feature = "json",
         serde(serialize_with = "ser_hex", deserialize_with = "de_hex_vec")
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     #[cfg_attr(feature = "cbor", n(1), cbor(with = "minicbor::bytes"))]
     pub cbor: Vec<u8>,
 }
@@ -259,6 +273,20 @@ impl<'b, Ctx> Decode<'b, Ctx> for AddressDto {
     }
 }
 
+/// `pallas_addresses::Address` has no `JsonSchema` impl of its own, so
+/// this mirrors the `Serialize` impl above by hand: the wire shape is
+/// a bech32 string, same as `String`'s own schema.
+#[cfg(feature = "schema")]
+impl JsonSchema for AddressDto {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Address".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        String::json_schema(generator)
+    }
+}
+
 /// Mirrors `q::AnyUtxoData`'s populated fields. `block` is the
 /// creation point, zero-valued when unknown (see `ChainPointDto`).
 /// `spent_by` is `None` iff confirmedly unspent -- the spending tx's
@@ -267,12 +295,14 @@ impl<'b, Ctx> Decode<'b, Ctx> for AddressDto {
 /// reason.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct UtxoDto {
     #[cfg_attr(
         feature = "json",
         serde(serialize_with = "ser_hex", deserialize_with = "de_hex_array")
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     #[cfg_attr(feature = "cbor", n(0), cbor(with = "minicbor::bytes"))]
     pub tx_hash: TxHash,
     #[cfg_attr(feature = "cbor", n(1))]
@@ -288,6 +318,7 @@ pub struct UtxoDto {
             default
         )
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<String>"))]
     #[cfg_attr(feature = "cbor", n(3), cbor(with = "minicbor::bytes"))]
     pub spent_by: Option<TxHash>,
     #[cfg_attr(feature = "cbor", n(4))]
@@ -308,6 +339,7 @@ pub struct UtxoDto {
 /// paginated); for `SearchUtxos`, absent once exhausted.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct PageDto {
     #[cfg_attr(feature = "cbor", n(0))]
@@ -340,12 +372,14 @@ pub struct PageDto {
 /// have the data on hand.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct TxDto {
     #[cfg_attr(
         feature = "json",
         serde(serialize_with = "ser_hex", deserialize_with = "de_hex_array")
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     #[cfg_attr(feature = "cbor", n(0), cbor(with = "minicbor::bytes"))]
     pub hash: TxHash,
     #[cfg_attr(feature = "cbor", n(1))]
@@ -360,6 +394,7 @@ pub struct TxDto {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct TxResponseDto {
     #[cfg_attr(feature = "cbor", n(0))]
@@ -372,18 +407,21 @@ pub struct TxResponseDto {
 /// `PlutusData`.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct DatumResponseDto {
     #[cfg_attr(
         feature = "json",
         serde(serialize_with = "ser_hex", deserialize_with = "de_hex_array")
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     #[cfg_attr(feature = "cbor", n(0), cbor(with = "minicbor::bytes"))]
     pub key: [u8; 32],
     #[cfg_attr(
         feature = "json",
         serde(serialize_with = "ser_hex", deserialize_with = "de_hex_vec")
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     #[cfg_attr(feature = "cbor", n(1), cbor(with = "minicbor::bytes"))]
     pub native_bytes: Vec<u8>,
     #[cfg_attr(feature = "cbor", n(2))]
@@ -394,6 +432,7 @@ pub struct DatumResponseDto {
 /// independently via their own cursor (`PageDto::next`'s shape).
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct ChangesDto {
     #[cfg_attr(feature = "cbor", n(0))]
@@ -421,6 +460,7 @@ pub struct ChangesDto {
 /// containing `StaleDto`, matching `q::Stale`'s shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 #[cfg_attr(feature = "json", serde(rename_all = "snake_case"))]
 #[cfg_attr(feature = "cbor", cbor(index_only))]
@@ -437,6 +477,7 @@ pub enum StaleReasonDto {
 /// comment for the strict/permissive/none semantics behind this.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct StaleDto {
     #[cfg_attr(feature = "cbor", n(0))]
@@ -455,6 +496,7 @@ pub struct StaleDto {
 /// instead of nesting a second one.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 #[cfg_attr(feature = "cbor", cbor(flat))]
 pub enum ChangesResponseDto {
@@ -466,18 +508,21 @@ pub enum ChangesResponseDto {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct SubmitTxResponseDto {
     #[cfg_attr(
         feature = "json",
         serde(serialize_with = "ser_hex", deserialize_with = "de_hex_vec")
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     #[cfg_attr(feature = "cbor", n(0), cbor(with = "minicbor::bytes"))]
     pub r#ref: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 pub struct ErrorBody {
     #[cfg_attr(feature = "cbor", n(0))]

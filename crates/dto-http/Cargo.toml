@@ -13,6 +13,11 @@ description.workspace = true
 [features]
 json = ["dep:serde"]
 cbor = ["dep:minicbor"]
+# JSON Schema derivation for the `json`-wire DTOs -- pulls in `json`
+# since a schema for a shape that isn't actually serialized to JSON
+# this way wouldn't mean anything. Backs the `schema` example (see its
+# module doc) that CI publishes to the docs site.
+schema = ["json", "dep:schemars"]
 # Independent of `json`/`cbor`: `Display` (Prometheus text) needs
 # neither, so a consumer wanting only health/metrics doesn't pull in
 # query-DTO wire format machinery, or vice versa.
@@ -22,4 +27,15 @@ metrics = []
 hex = { workspace = true }
 minicbor = { workspace = true, optional = true }
 pallas-addresses = { workspace = true }
+schemars = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
+
+# Only for the `schema` example's own JSON rendering of `schemars::Schema`
+# -- the library itself has no serde_json dependency.
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[[example]]
+name = "schema"
+path = "examples/schema.rs"
+required-features = ["schema", "metrics"]

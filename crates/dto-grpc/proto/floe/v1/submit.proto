@@ -1,12 +1,11 @@
 /// Submit transactions to the chain and (not yet supported by floe)
 /// track their mempool lifecycle.
 ///
-/// floe's own fork of UTxORPC's `submit.proto`, not the vendored spec
-/// file (see `docs/utxorpc-spec/utxorpc/v1/submit/submit.proto` for
-/// the pristine upstream copy, kept only as a diff baseline -- see
-/// `docs/utxorpc-divergences.md`). Textually identical to upstream
-/// apart from the package/import repackaging -- the message and RPC
-/// set itself hasn't diverged.
+/// floe's own fork of UTxORPC's `submit.proto`. Textually identical
+/// to upstream apart from the package/import repackaging -- the
+/// message and RPC set itself hasn't diverged. Where a future
+/// divergence lands, it gets commented inline on the diverging field
+/// itself, not in a separate doc.
 
 syntax = "proto3";
 

@@ -3,9 +3,9 @@ name: Docs
 # Every push/PR, not tag-gated like release.yml -- docs should stay
 # buildable continuously, not just at release time. Nothing here is a
 # hand-maintained spec: rustdoc renders the doc comments already in the
-# source, and the JSON Schema is generated straight from the live
-# struct/enum definitions of whichever crate has the `schema` example
-# (see its own module doc). Both fail loudly if the source changes in a
+# source, and the JSON Schema is generated straight from `floe-dto-http`'s
+# live struct/enum definitions via its `schema` example (see that
+# example's own module doc). Both fail loudly if the source changes in a
 # way that breaks them, which is the point -- there's nothing else for
 # either to drift against.
 on:
@@ -31,13 +31,14 @@ jobs:
       # dependencies get built for doc generation, not where the HTML
       # goes (confirmed by actually running this, not assumed).
       - run: mkdir -p dist && cp -r target/doc dist/rustdoc
-      # No `-p <crate>`: cargo resolves `--example schema` on its own as
-      # long as exactly one workspace crate has it, so renaming that
-      # crate (as already happened once -- it used to be `floe-dto`)
-      # can't break this again. If a second crate ever adds its own
-      # `schema` example, cargo fails loudly asking which one, same
-      # fail-loud spirit as everything else here.
-      - run: nix develop -c cargo run --release --example schema > dist/schema.json
+      # `-p floe-dto-http`: the `schema` example lives there (it used to
+      # be on a since-removed `floe-dto` crate, back before the
+      # grpc/http DTO split -- see that crate's module doc). Its
+      # `required-features` (`schema`, pulling in `schemars`; `metrics`,
+      # for `HealthDto` and friends) aren't on by default, so they're
+      # spelled out here rather than relying on `--all-features`
+      # catching it by accident.
+      - run: nix develop -c cargo run --release -p floe-dto-http --example schema --features schema,metrics > dist/schema.json
       # `cargo doc` on a multi-crate workspace produces no root
       # `index.html` of its own (only per-crate directories under
       # `rustdoc/`) -- GitHub Pages needs one at the published root, so

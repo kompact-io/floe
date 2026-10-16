@@ -1,0 +1,30 @@
+name: CI
+
+# Every push/PR, not tag-gated like release.yml. Runs the fast subset of
+# flake.nix's `checks` output -- fmt, clippy, and the native (host-arch)
+# package builds -- so a broken build/lint/format is caught on every
+# push, not just when a release tag happens to trigger release.yml's
+# `verify` job. Deliberately excludes the musl cross-build checks
+# (`floe-<target>` for each entry in flake.nix's `crossPkgsByTarget`) --
+# those only matter for release artifacts and roughly double the run
+# time; release.yml's `build` job still exercises them on tag pushes.
+on:
+  push:
+  pull_request:
+
+jobs:
+  nix-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: |
+          nix build -L \
+            .#checks.x86_64-linux.fmt \
+            .#checks.x86_64-linux.clippy \
+            .#checks.x86_64-linux.floe \
+            .#checks.x86_64-linux.floe-client \
+            .#checks.x86_64-linux.floe-smoke \
+            .#checks.x86_64-linux.chainsync-probe \
+            .#checks.x86_64-linux.seed-probe

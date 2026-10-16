@@ -1,7 +1,6 @@
-//! Compiles floe's own proto fork (`proto/floe/v1/`, see
-//! `docs/utxorpc-divergences.md` for how it relates to the pristine
-//! upstream copy under `docs/utxorpc-spec/`) into Rust via
-//! `tonic-prost-build`.
+//! Compiles floe's own UTxORPC fork (`proto/floe/v1/`; divergences
+//! from upstream are commented inline on the diverging fields) into
+//! Rust via `tonic-prost-build`.
 //!
 //! Uses `protox` (a pure-Rust protobuf parser) instead of shelling out
 //! to a system `protoc` binary: there's no `protoc` on `PATH` in this

@@ -1,11 +1,9 @@
 /// A consistent view of the state of the ledger
 ///
-/// floe's own fork of UTxORPC's `query.proto`, not the vendored spec
-/// file (see `docs/utxorpc-spec/utxorpc/v1/query/query.proto` for the
-/// pristine upstream copy, kept only as a diff baseline -- see
-/// `docs/utxorpc-divergences.md`). Diverges on purpose where floe's
-/// needs differ; stays textually identical to upstream everywhere
-/// else, so that diff is the real documentation of what changed.
+/// floe's own fork of UTxORPC's `query.proto`. Diverges on purpose
+/// where floe's needs differ (commented inline on the diverging
+/// field, e.g. `AnyUtxoData.spent_by` below); stays textually
+/// identical to upstream everywhere else.
 
 syntax = "proto3";
 

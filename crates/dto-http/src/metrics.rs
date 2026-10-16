@@ -17,6 +17,8 @@ use std::fmt;
 
 #[cfg(feature = "cbor")]
 use minicbor::{Decode, Encode};
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 #[cfg(feature = "json")]
 use serde::Serialize;
 
@@ -29,6 +31,7 @@ use serde::Serialize;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "json", derive(Serialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 #[cfg_attr(feature = "json", serde(rename_all = "snake_case"))]
 #[cfg_attr(feature = "cbor", cbor(index_only))]
@@ -64,6 +67,7 @@ impl fmt::Display for Stage {
 /// the DB right now."
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "json", derive(Serialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 #[cfg_attr(feature = "json", serde(rename_all = "snake_case"))]
 #[cfg_attr(feature = "cbor", cbor(index_only))]
@@ -85,6 +89,7 @@ impl Readiness {
 /// concern, so it lives here, not in `MetricsDto`.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode))]
 pub struct HealthDto {
     #[cfg_attr(feature = "cbor", n(0))]
@@ -94,6 +99,7 @@ pub struct HealthDto {
     #[cfg_attr(feature = "cbor", n(2))]
     pub block_no: u64,
     #[cfg_attr(feature = "json", serde(serialize_with = "crate::ser_hex"))]
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
     #[cfg_attr(feature = "cbor", n(3), cbor(with = "minicbor::bytes"))]
     pub tip_hash: [u8; 32],
     #[cfg_attr(feature = "cbor", n(4))]
@@ -139,6 +145,7 @@ impl fmt::Display for HealthDto {
 /// (0 = catchup, 1 = running).
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode))]
 pub struct ReplicaHealthDto {
     #[cfg_attr(feature = "cbor", n(0))]
@@ -176,6 +183,7 @@ impl fmt::Display for ReplicaHealthDto {
 /// same `HealthDto` with unreachable fields nulled out.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "json", serde(rename_all = "snake_case"))]
 #[cfg_attr(feature = "cbor", derive(Encode))]
 #[cfg_attr(feature = "cbor", cbor(flat))]
@@ -201,6 +209,7 @@ impl fmt::Display for HealthResponseDto {
 /// per-route HTTP counter landing in the same field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "json", derive(Serialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode, Decode))]
 #[cfg_attr(feature = "json", serde(rename_all = "snake_case"))]
 #[cfg_attr(feature = "cbor", cbor(index_only))]
@@ -226,6 +235,7 @@ impl fmt::Display for Scheme {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode))]
 pub struct RequestCount {
     #[cfg_attr(feature = "cbor", n(0))]
@@ -243,6 +253,7 @@ pub struct RequestCount {
 /// applies blocks there.
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "json", derive(Serialize))]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[cfg_attr(feature = "cbor", derive(Encode))]
 pub struct MetricsDto {
     #[cfg_attr(feature = "cbor", n(0))]
