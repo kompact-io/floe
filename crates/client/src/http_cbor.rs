@@ -29,7 +29,10 @@ impl Client {
 
     /// Like `fetch`, but a 404 is `Ok(None)` instead of `Err` -- see
     /// `http_json::Client::fetch_opt`'s doc comment for why.
-    async fn fetch_opt<T: for<'b> minicbor::Decode<'b, ()>>(&self, path: &str) -> Result<Option<T>> {
+    async fn fetch_opt<T: for<'b> minicbor::Decode<'b, ()>>(
+        &self,
+        path: &str,
+    ) -> Result<Option<T>> {
         let (status, body) = http_common::get(&self.addr, path, "application/cbor").await?;
         if status == 404 {
             return Ok(None);
@@ -69,8 +72,12 @@ impl Backend for Client {
         stake_cred: Option<Cred>,
         paging: Paging,
     ) -> Result<PageDto> {
-        self.fetch(&http_common::utxos_path(Some(pay_cred), stake_cred, &paging))
-            .await
+        self.fetch(&http_common::utxos_path(
+            Some(pay_cred),
+            stake_cred,
+            &paging,
+        ))
+        .await
     }
 
     async fn pay_cred(&mut self, cred: Cred, paging: Paging) -> Result<PageDto> {

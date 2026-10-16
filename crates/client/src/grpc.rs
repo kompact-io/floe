@@ -149,7 +149,10 @@ fn utxo_dto(item: q::AnyUtxoData) -> Result<UtxoDto> {
         .ok_or_else(|| anyhow::anyhow!("AnyUtxoData has no parsed_state"))?;
     let spent_by = item
         .spent_by
-        .map(|h| -> Result<TxHash> { h.try_into().map_err(|_| anyhow::anyhow!("spent_by must be 32 bytes")) })
+        .map(|h| -> Result<TxHash> {
+            h.try_into()
+                .map_err(|_| anyhow::anyhow!("spent_by must be 32 bytes"))
+        })
         .transpose()?;
     Ok(UtxoDto {
         tx_hash,
@@ -234,17 +237,22 @@ fn stale_dto(s: q::Stale) -> StaleDto {
     }
 }
 
-fn cred_predicate(payment_part: Option<Vec<u8>>, delegation_part: Option<Vec<u8>>) -> q::UtxoPredicate {
+fn cred_predicate(
+    payment_part: Option<Vec<u8>>,
+    delegation_part: Option<Vec<u8>>,
+) -> q::UtxoPredicate {
     q::UtxoPredicate {
         r#match: Some(q::AnyUtxoPattern {
-            utxo_pattern: Some(q::any_utxo_pattern::UtxoPattern::Cardano(c::TxOutputPattern {
-                address: Some(c::AddressPattern {
-                    exact_address: None,
-                    payment_part,
-                    delegation_part,
-                }),
-                asset: None,
-            })),
+            utxo_pattern: Some(q::any_utxo_pattern::UtxoPattern::Cardano(
+                c::TxOutputPattern {
+                    address: Some(c::AddressPattern {
+                        exact_address: None,
+                        payment_part,
+                        delegation_part,
+                    }),
+                    asset: None,
+                },
+            )),
         }),
         not: vec![],
         all_of: vec![],
@@ -252,7 +260,10 @@ fn cred_predicate(payment_part: Option<Vec<u8>>, delegation_part: Option<Vec<u8>
     }
 }
 
-fn address_pattern(payment_part: Option<Vec<u8>>, delegation_part: Option<Vec<u8>>) -> c::AddressPattern {
+fn address_pattern(
+    payment_part: Option<Vec<u8>>,
+    delegation_part: Option<Vec<u8>>,
+) -> c::AddressPattern {
     c::AddressPattern {
         exact_address: None,
         payment_part,
@@ -273,7 +284,11 @@ impl Client {
             .await?
             .into_inner();
         Ok(PageDto {
-            items: resp.items.into_iter().map(utxo_dto).collect::<Result<_>>()?,
+            items: resp
+                .items
+                .into_iter()
+                .map(utxo_dto)
+                .collect::<Result<_>>()?,
             ledger_tip: chain_point_dto(resp.ledger_tip),
             next: resp.next_token,
         })
@@ -296,17 +311,24 @@ impl Backend for Client {
         resp.items.into_iter().next().map(utxo_dto).transpose()
     }
 
-    async fn address(&mut self, pay_cred: Cred, stake_cred: Option<Cred>, paging: Paging) -> Result<PageDto> {
+    async fn address(
+        &mut self,
+        pay_cred: Cred,
+        stake_cred: Option<Cred>,
+        paging: Paging,
+    ) -> Result<PageDto> {
         let predicate = cred_predicate(Some(pay_cred.to_vec()), stake_cred.map(|c| c.to_vec()));
         self.search(predicate, paging).await
     }
 
     async fn pay_cred(&mut self, cred: Cred, paging: Paging) -> Result<PageDto> {
-        self.search(cred_predicate(Some(cred.to_vec()), None), paging).await
+        self.search(cred_predicate(Some(cred.to_vec()), None), paging)
+            .await
     }
 
     async fn stake_cred(&mut self, cred: Cred, paging: Paging) -> Result<PageDto> {
-        self.search(cred_predicate(None, Some(cred.to_vec())), paging).await
+        self.search(cred_predicate(None, Some(cred.to_vec())), paging)
+            .await
     }
 
     async fn tx(&mut self, tx_hash: TxHash) -> Result<Option<TxResponseDto>> {
@@ -383,15 +405,22 @@ impl Backend for Client {
             })
             .await?
             .into_inner();
-        match resp.result.ok_or_else(|| anyhow::anyhow!("UtxoChangesResponse has no result"))? {
-            q::utxo_changes_response::Result::Changes(c) => Ok(ChangesResponseDto::Changes(ChangesDto {
-                created: c.created.into_iter().map(utxo_dto).collect::<Result<_>>()?,
-                spent: c.spent.into_iter().map(utxo_dto).collect::<Result<_>>()?,
-                ledger_tip: chain_point_dto(c.ledger_tip),
-                created_next: c.created_next_token,
-                spent_next: c.spent_next_token,
-            })),
-            q::utxo_changes_response::Result::Stale(s) => Ok(ChangesResponseDto::Stale(stale_dto(s))),
+        match resp
+            .result
+            .ok_or_else(|| anyhow::anyhow!("UtxoChangesResponse has no result"))?
+        {
+            q::utxo_changes_response::Result::Changes(c) => {
+                Ok(ChangesResponseDto::Changes(ChangesDto {
+                    created: c.created.into_iter().map(utxo_dto).collect::<Result<_>>()?,
+                    spent: c.spent.into_iter().map(utxo_dto).collect::<Result<_>>()?,
+                    ledger_tip: chain_point_dto(c.ledger_tip),
+                    created_next: c.created_next_token,
+                    spent_next: c.spent_next_token,
+                }))
+            }
+            q::utxo_changes_response::Result::Stale(s) => {
+                Ok(ChangesResponseDto::Stale(stale_dto(s)))
+            }
         }
     }
 

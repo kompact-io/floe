@@ -5,7 +5,9 @@
 //! the preprod faucet; it's printed for that step only, never read
 //! back.
 
-use pallas_addresses::{Address, Network, ShelleyAddress, ShelleyDelegationPart, ShelleyPaymentPart};
+use pallas_addresses::{
+    Address, Network, ShelleyAddress, ShelleyDelegationPart, ShelleyPaymentPart,
+};
 use pallas_crypto::hash::Hasher;
 use pallas_crypto::key::ed25519::SecretKey;
 

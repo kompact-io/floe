@@ -150,7 +150,10 @@ fn seed(path: &Path) {
     let mut conn = Connection::open(path).unwrap();
     store::init(&conn).unwrap();
     let plain = Utxo {
-        output_ref: OutputRef { tx_hash: TX0, ix: 0 },
+        output_ref: OutputRef {
+            tx_hash: TX0,
+            ix: 0,
+        },
         pay_cred: PAY_CRED,
         pay_script: false,
         stake_cred: None,
@@ -162,7 +165,10 @@ fn seed(path: &Path) {
         script_hash: None,
     };
     let with_asset_and_script = Utxo {
-        output_ref: OutputRef { tx_hash: TX1, ix: 0 },
+        output_ref: OutputRef {
+            tx_hash: TX1,
+            ix: 0,
+        },
         pay_cred: PAY_CRED,
         pay_script: false,
         stake_cred: None,
@@ -174,7 +180,10 @@ fn seed(path: &Path) {
         script_hash: Some(SCRIPT_HASH),
     };
     let with_datum = Utxo {
-        output_ref: OutputRef { tx_hash: TX2, ix: 0 },
+        output_ref: OutputRef {
+            tx_hash: TX2,
+            ix: 0,
+        },
         pay_cred: PAY_CRED,
         pay_script: false,
         stake_cred: None,
@@ -186,7 +195,10 @@ fn seed(path: &Path) {
         script_hash: None,
     };
     let decoded = DecodedBlock {
-        txs: [TX0, TX1, TX2].into_iter().map(|hash| TxRow { hash }).collect(),
+        txs: [TX0, TX1, TX2]
+            .into_iter()
+            .map(|hash| TxRow { hash })
+            .collect(),
         spent: Default::default(),
         created: vec![plain, with_asset_and_script, with_datum],
         datums: vec![DatumRow {
@@ -293,7 +305,11 @@ impl ServerProc {
         let child = cmd.spawn().expect("spawn `floe serve`");
         wait_for_port(&addr);
         wait_for_port(&http_addr);
-        Self { child, addr, http_addr }
+        Self {
+            child,
+            addr,
+            http_addr,
+        }
     }
 }
 
@@ -319,7 +335,11 @@ fn run_client(server_addr: &str, args: &[&str]) -> Output {
 /// concrete `client`.
 async fn assert_full_round_trip<B: Backend>(client: &mut B) {
     // read_ref: the plain UTxO, and a miss.
-    let utxo = client.read_ref(TX0, 0).await.unwrap().expect("TX0 was seeded");
+    let utxo = client
+        .read_ref(TX0, 0)
+        .await
+        .unwrap()
+        .expect("TX0 was seeded");
     assert_eq!(utxo.coin, 7);
     assert!(client.read_ref([0xffu8; 32], 0).await.unwrap().is_none());
 
@@ -335,11 +355,17 @@ async fn assert_full_round_trip<B: Backend>(client: &mut B) {
     assert_eq!(page.items[1].assets[0].policy_id, ASSET_POLICY);
     assert_eq!(page.items[1].assets[0].assets[0].name, ASSET_NAME);
     assert_eq!(page.items[1].assets[0].assets[0].quantity, ASSET_QTY);
-    let script = page.items[1].script.as_ref().expect("TX1 has a reference script");
+    let script = page.items[1]
+        .script
+        .as_ref()
+        .expect("TX1 has a reference script");
     assert_eq!(script.lang, ScriptLang::PlutusV2);
     assert_eq!(script.cbor, SCRIPT_CBOR);
     assert_eq!(page.items[2].coin, 13);
-    let datum = page.items[2].datum.as_ref().expect("TX2 has a resolved datum");
+    let datum = page.items[2]
+        .datum
+        .as_ref()
+        .expect("TX2 has a resolved datum");
     assert_eq!(datum.hash, DATUM_HASH);
     assert_eq!(datum.original_cbor.as_deref(), Some(&DATUM_CBOR[..]));
 
@@ -360,7 +386,10 @@ async fn assert_full_round_trip<B: Backend>(client: &mut B) {
 
     // stake_cred: none of this fixture's rows carry one, so a search for
     // an arbitrary one comes back empty rather than erroring.
-    let page = client.stake_cred([0u8; 28], floe_client::Paging::default()).await.unwrap();
+    let page = client
+        .stake_cred([0u8; 28], floe_client::Paging::default())
+        .await
+        .unwrap();
     assert!(page.items.is_empty());
 
     // tx: hydrated inputs/outputs, and a miss. `block`/`spent_by` are
@@ -374,7 +403,11 @@ async fn assert_full_round_trip<B: Backend>(client: &mut B) {
     assert!(client.tx([0xffu8; 32]).await.unwrap().is_none());
 
     // datum: the resolved hash-kind datum, and a miss.
-    let datum = client.datum(DATUM_HASH).await.unwrap().expect("seeded above");
+    let datum = client
+        .datum(DATUM_HASH)
+        .await
+        .unwrap()
+        .expect("seeded above");
     assert_eq!(datum.native_bytes, DATUM_CBOR);
     assert!(client.datum([0xffu8; 32]).await.unwrap().is_none());
 
@@ -440,8 +473,14 @@ async fn tx_lookup_agrees_across_schemes() {
 
     assert_eq!(via_grpc.tx.outputs[0].coin, via_http.tx.outputs[0].coin);
     assert_eq!(via_grpc.tx.outputs[0].block, via_http.tx.outputs[0].block);
-    assert_eq!(via_grpc.tx.outputs[0].spent_by, via_http.tx.outputs[0].spent_by);
-    assert_eq!(via_grpc.tx.outputs[0].block, floe_dto_http::ChainPointDto::default());
+    assert_eq!(
+        via_grpc.tx.outputs[0].spent_by,
+        via_http.tx.outputs[0].spent_by
+    );
+    assert_eq!(
+        via_grpc.tx.outputs[0].block,
+        floe_dto_http::ChainPointDto::default()
+    );
     assert_eq!(via_grpc.tx.outputs[0].spent_by, None);
 }
 

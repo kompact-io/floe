@@ -225,10 +225,14 @@ async fn dispatch<B: Backend>(client: &mut B, cmd: Command) -> Result<Output> {
         Command::Address { address, paging } => {
             let addr: Address = address.parse()?;
             let (pay_cred, stake_cred) = floe_client::shelley_creds(&addr)?;
-            Ok(Output::Page(client.address(pay_cred, stake_cred, paging).await?))
+            Ok(Output::Page(
+                client.address(pay_cred, stake_cred, paging).await?,
+            ))
         }
         Command::PayCred { cred, paging } => Ok(Output::Page(client.pay_cred(cred, paging).await?)),
-        Command::StakeCred { cred, paging } => Ok(Output::Page(client.stake_cred(cred, paging).await?)),
+        Command::StakeCred { cred, paging } => {
+            Ok(Output::Page(client.stake_cred(cred, paging).await?))
+        }
         Command::Tx { tx_hash } => match client.tx(tx_hash).await? {
             Some(tx) => Ok(Output::Tx(tx)),
             None => {
@@ -286,18 +290,20 @@ async fn dispatch<B: Backend>(client: &mut B, cmd: Command) -> Result<Output> {
                 }
             }
         }
-        Command::Selfpay { skey, submit } => match floe_client::self_pay::run(client, skey, submit).await {
-            Ok(result) => Ok(Output::SelfPay(result)),
-            Err(floe_client::self_pay::SelfPayError::NoFunds) => {
-                eprintln!("no funds, cannot test submit");
-                std::process::exit(2);
+        Command::Selfpay { skey, submit } => {
+            match floe_client::self_pay::run(client, skey, submit).await {
+                Ok(result) => Ok(Output::SelfPay(result)),
+                Err(floe_client::self_pay::SelfPayError::NoFunds) => {
+                    eprintln!("no funds, cannot test submit");
+                    std::process::exit(2);
+                }
+                Err(floe_client::self_pay::SelfPayError::InsufficientFunds) => {
+                    eprintln!("insufficient funds, cannot test submit");
+                    std::process::exit(3);
+                }
+                Err(floe_client::self_pay::SelfPayError::Other(e)) => Err(e),
             }
-            Err(floe_client::self_pay::SelfPayError::InsufficientFunds) => {
-                eprintln!("insufficient funds, cannot test submit");
-                std::process::exit(3);
-            }
-            Err(floe_client::self_pay::SelfPayError::Other(e)) => Err(e),
-        },
+        }
         Command::KeyInfo { .. } => unreachable!("main() handles KeyInfo before dispatch"),
     }
 }
@@ -309,7 +315,12 @@ async fn main() -> Result<()> {
     // Pure local computation, no server/transport involved -- handled
     // before any client is constructed, so it works with no
     // `floe-server` running.
-    if let Command::KeyInfo { skey, network, output_json } = &cli.command {
+    if let Command::KeyInfo {
+        skey,
+        network,
+        output_json,
+    } = &cli.command
+    {
         let info = floe_client::key_info::key_info(*skey, network.0)?;
         if *output_json {
             println!("{}", serde_json::to_string(&info)?);
@@ -337,7 +348,9 @@ async fn main() -> Result<()> {
                 dispatch(&mut client, cli.command).await?
             }
             #[cfg(not(feature = "http-json"))]
-            anyhow::bail!("--transport http --format json: not compiled in (missing the `http-json` feature)");
+            anyhow::bail!(
+                "--transport http --format json: not compiled in (missing the `http-json` feature)"
+            );
         }
         (Transport::Http, Format::Cbor) => {
             #[cfg(feature = "http-cbor")]
@@ -346,7 +359,9 @@ async fn main() -> Result<()> {
                 dispatch(&mut client, cli.command).await?
             }
             #[cfg(not(feature = "http-cbor"))]
-            anyhow::bail!("--transport http --format cbor: not compiled in (missing the `http-cbor` feature)");
+            anyhow::bail!(
+                "--transport http --format cbor: not compiled in (missing the `http-cbor` feature)"
+            );
         }
     };
 

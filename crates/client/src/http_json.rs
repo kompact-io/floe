@@ -69,8 +69,12 @@ impl Backend for Client {
         stake_cred: Option<Cred>,
         paging: Paging,
     ) -> Result<PageDto> {
-        self.fetch(&http_common::utxos_path(Some(pay_cred), stake_cred, &paging))
-            .await
+        self.fetch(&http_common::utxos_path(
+            Some(pay_cred),
+            stake_cred,
+            &paging,
+        ))
+        .await
     }
 
     async fn pay_cred(&mut self, cred: Cred, paging: Paging) -> Result<PageDto> {

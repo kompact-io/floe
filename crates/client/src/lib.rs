@@ -13,7 +13,9 @@
 //! in the server's native-only stack.
 
 mod common;
-pub use common::{Backend, ChangesParams, Cred, NetworkArg, Paging, TxHash, parse_hex, shelley_creds};
+pub use common::{
+    Backend, ChangesParams, Cred, NetworkArg, Paging, TxHash, parse_hex, shelley_creds,
+};
 
 pub mod key_info;
 pub mod self_pay;
@@ -21,9 +23,9 @@ pub mod self_pay;
 #[cfg(feature = "grpc")]
 pub mod grpc;
 
+#[cfg(feature = "http-cbor")]
+pub mod http_cbor;
 #[cfg(any(feature = "http-json", feature = "http-cbor"))]
 mod http_common;
 #[cfg(feature = "http-json")]
 pub mod http_json;
-#[cfg(feature = "http-cbor")]
-pub mod http_cbor;

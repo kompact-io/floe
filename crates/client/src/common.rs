@@ -136,7 +136,8 @@ pub trait Backend {
         paging: Paging,
     ) -> anyhow::Result<floe_dto_http::PageDto>;
 
-    async fn tx(&mut self, tx_hash: TxHash) -> anyhow::Result<Option<floe_dto_http::TxResponseDto>>;
+    async fn tx(&mut self, tx_hash: TxHash)
+    -> anyhow::Result<Option<floe_dto_http::TxResponseDto>>;
 
     async fn datum(
         &mut self,

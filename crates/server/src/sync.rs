@@ -11,9 +11,9 @@ use rusqlite::Connection;
 use tokio::sync::mpsc;
 use tracing::{info, instrument, warn};
 
-use crate::health::Health;
 use crate::catchup::{self, ChunkConfig};
 use crate::decode::{self, DecodedBlock};
+use crate::health::Health;
 use crate::store::{self, BlockMeta, Mode};
 
 /// jemalloc only returns a chunk to the OS once it's entirely free. Catch-up's
@@ -196,10 +196,7 @@ const MAX_INTERSECT_RETRIES: u32 = 60;
 /// Retries `find_intersect` against the given point until the peer
 /// confirms it (or gives up -- see `MAX_INTERSECT_RETRIES`'s doc
 /// comment, above).
-async fn find_intersect_with_retry(
-    peer: &mut PeerClient,
-    point: &Point,
-) -> Result<()> {
+async fn find_intersect_with_retry(peer: &mut PeerClient, point: &Point) -> Result<()> {
     for attempt in 1..=MAX_INTERSECT_RETRIES {
         let (found, _tip) = peer.chainsync().find_intersect(vec![point.clone()]).await?;
         if found.is_some() {
@@ -212,7 +209,9 @@ async fn find_intersect_with_retry(
         );
         tokio::time::sleep(INTERSECT_RETRY_DELAY).await;
     }
-    bail!("peer never caught up to our resume point {point:?} after {MAX_INTERSECT_RETRIES} attempts");
+    bail!(
+        "peer never caught up to our resume point {point:?} after {MAX_INTERSECT_RETRIES} attempts"
+    );
 }
 
 /// Pushes `Event`s into `tx` in chain order until the channel closes or an

@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use floe_dto_grpc::floe::v1::health as h;
-pub use h::health_service_server::HealthServiceServer;
 use floe_dto_http::{HealthResponseDto, MetricsDto, Readiness, RequestCount, Scheme, Stage};
+pub use h::health_service_server::HealthServiceServer;
 use tonic::{Request, Response, Status};
 
 use crate::health::Health;
@@ -79,11 +79,17 @@ fn metrics_response_proto(dto: MetricsDto) -> h::MetricsResponse {
         requests: dto
             .requests
             .into_iter()
-            .map(|RequestCount { scheme, method, count }| h::RequestCount {
-                scheme: scheme_proto(scheme),
-                method,
-                count,
-            })
+            .map(
+                |RequestCount {
+                     scheme,
+                     method,
+                     count,
+                 }| h::RequestCount {
+                    scheme: scheme_proto(scheme),
+                    method,
+                    count,
+                },
+            )
             .collect(),
     }
 }

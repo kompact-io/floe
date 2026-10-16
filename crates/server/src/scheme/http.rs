@@ -45,8 +45,8 @@ use floe_dto_http::{
     SubmitTxResponseDto, TxDto, TxResponseDto, UtxoDto,
 };
 
-use crate::domain::reconstruct_address;
 use crate::decode::OutputRef;
+use crate::domain::reconstruct_address;
 use crate::query::{self, BlockPoint, ResolvedDatum, ResolvedTx, ResolvedUtxo, StaleReason};
 use crate::submit;
 
@@ -126,9 +126,7 @@ impl ApiError {
     }
     fn message(self) -> String {
         match self {
-            Self::BadRequest(m) | Self::NotFound(m) | Self::Unavailable(m) | Self::Internal(m) => {
-                m
-            }
+            Self::BadRequest(m) | Self::NotFound(m) | Self::Unavailable(m) | Self::Internal(m) => m,
         }
     }
 }
@@ -174,12 +172,7 @@ where
     match fmt {
         Format::Json => {
             let body = serde_json::to_vec(value).expect("dto JSON serialization is infallible");
-            (
-                status,
-                [(header::CONTENT_TYPE, "application/json")],
-                body,
-            )
-                .into_response()
+            (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
         }
         Format::Cbor => {
             let mut buf = Vec::new();
@@ -263,13 +256,10 @@ fn utxo_dto(conn: &Connection, u: ResolvedUtxo, network: Network) -> Result<Utxo
         coin: u.coin,
         assets,
         datum: datum_dto(u.datum.clone()),
-        script: u
-            .script
-            .clone()
-            .map(|s| ScriptDto {
-                lang: s.lang,
-                cbor: s.cbor,
-            }),
+        script: u.script.clone().map(|s| ScriptDto {
+            lang: s.lang,
+            cbor: s.cbor,
+        }),
     })
 }
 
@@ -306,13 +296,10 @@ fn tx_row_dto(u: ResolvedUtxo, network: Network) -> Result<UtxoDto> {
         coin: u.coin,
         assets,
         datum: datum_dto(u.datum.clone()),
-        script: u
-            .script
-            .clone()
-            .map(|s| ScriptDto {
-                lang: s.lang,
-                cbor: s.cbor,
-            }),
+        script: u.script.clone().map(|s| ScriptDto {
+            lang: s.lang,
+            cbor: s.cbor,
+        }),
     })
 }
 
@@ -406,14 +393,15 @@ enum AddressFilter {
     StakeOnly([u8; 28]),
 }
 
-fn address_filter(pay_cred: Option<&str>, stake_cred: Option<&str>) -> Result<AddressFilter, ApiError> {
+fn address_filter(
+    pay_cred: Option<&str>,
+    stake_cred: Option<&str>,
+) -> Result<AddressFilter, ApiError> {
     match (pay_cred, stake_cred) {
         (Some(p), Some(d)) => Ok(AddressFilter::PayAndStake(cred28(p)?, cred28(d)?)),
         (Some(p), None) => Ok(AddressFilter::PayOnly(cred28(p)?)),
         (None, Some(d)) => Ok(AddressFilter::StakeOnly(cred28(d)?)),
-        (None, None) => Err(ApiError::bad_request(
-            "need pay_cred and/or stake_cred",
-        )),
+        (None, None) => Err(ApiError::bad_request("need pay_cred and/or stake_cred")),
     }
 }
 
@@ -627,7 +615,11 @@ async fn changes(st: &AppState, q: ChangesQuery) -> Result<ChangesResponseDto, A
     let since_hash = q.since_hash.as_deref().map(parse_hash32).transpose()?;
     let since_slot_req = q.since_slot;
     let limit = clamp_limit(q.limit, st.max_page_size);
-    let created_after = q.created_after.as_deref().map(parse_output_ref).transpose()?;
+    let created_after = q
+        .created_after
+        .as_deref()
+        .map(parse_output_ref)
+        .transpose()?;
     let spent_after = q.spent_after.as_deref().map(parse_output_ref).transpose()?;
 
     let db_path = st.db_path.clone();

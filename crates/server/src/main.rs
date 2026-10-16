@@ -279,9 +279,13 @@ fn run(args: RunArgs) -> Result<()> {
             let health = health.clone();
             let requests = requests.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    floe::scheme::http::metrics::serve(&metrics_addr, db_path, Some(health), requests)
-                        .await
+                if let Err(e) = floe::scheme::http::metrics::serve(
+                    &metrics_addr,
+                    db_path,
+                    Some(health),
+                    requests,
+                )
+                .await
                 {
                     error!(error = %e, "metrics server stopped");
                 }

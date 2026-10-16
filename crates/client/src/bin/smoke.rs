@@ -29,7 +29,9 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use floe_client::{Backend, ChangesParams, Cred, NetworkArg, Paging, TxHash, parse_hex};
-use floe_dto_http::{ChainPointDto, ChangesResponseDto, DatumResponseDto, PageDto, TxResponseDto, UtxoDto};
+use floe_dto_http::{
+    ChainPointDto, ChangesResponseDto, DatumResponseDto, PageDto, TxResponseDto, UtxoDto,
+};
 
 /// A wire scheme being smoke-tested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,7 +52,10 @@ impl std::fmt::Display for Scheme {
 }
 
 #[derive(Parser)]
-#[command(name = "floe-smoke", about = "Smoke-test a running floe-server deployment")]
+#[command(
+    name = "floe-smoke",
+    about = "Smoke-test a running floe-server deployment"
+)]
 struct Cli {
     /// gRPC address, host:port. Bare `host:port` gets `http://`
     /// prepended. One of `--grpc`/`--http-json`/`--http-cbor` required.
@@ -140,7 +145,9 @@ fn resolve_credential(cli: &Cli) -> Result<(Cred, Option<Cred>)> {
     } else if let Some(skey) = cli.skey {
         let info = floe_client::key_info::key_info(skey, cli.network.0)?;
         info!(address = %info.address, "derived address from --skey");
-        info.address.parse().expect("key_info always returns a valid address")
+        info.address
+            .parse()
+            .expect("key_info always returns a valid address")
     } else {
         anyhow::bail!("need one of --pay-cred, --address, or --skey to know what to search for");
     };
@@ -160,7 +167,12 @@ struct SmokeOutcome {
 }
 
 /// Scheme-agnostic smoke flow. `do_submit` gates `SubmitTx`.
-async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme, do_submit: bool) -> Result<SmokeOutcome> {
+async fn run_smoke<B: Backend>(
+    client: &mut B,
+    cli: &Cli,
+    scheme: Scheme,
+    do_submit: bool,
+) -> Result<SmokeOutcome> {
     let (pay_cred, stake_cred) = resolve_credential(cli)?;
     info!(
         scheme = %scheme,
@@ -173,7 +185,16 @@ async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme, do_sub
     let timeout = Duration::from_secs(cli.ready_timeout_secs);
     let start = Instant::now();
     loop {
-        match client.pay_cred(pay_cred, Paging { limit: Some(1), after: None }).await {
+        match client
+            .pay_cred(
+                pay_cred,
+                Paging {
+                    limit: Some(1),
+                    after: None,
+                },
+            )
+            .await
+        {
             Ok(_) => {
                 info!(scheme = %scheme, elapsed = ?start.elapsed(), "server is answering");
                 break;
@@ -186,7 +207,10 @@ async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme, do_sub
         }
     }
 
-    let mut outcome = SmokeOutcome { ok: true, ..Default::default() };
+    let mut outcome = SmokeOutcome {
+        ok: true,
+        ..Default::default()
+    };
     let mut record = |step: Step| {
         if matches!(step, Step::Fail(_)) {
             outcome.ok = false;
@@ -194,7 +218,10 @@ async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme, do_sub
         report(&step);
     };
 
-    let page = match client.address(pay_cred, stake_cred, Paging::default()).await {
+    let page = match client
+        .address(pay_cred, stake_cred, Paging::default())
+        .await
+    {
         Ok(page) => {
             let first = page.items.first().map(precis_item);
             record(Step::Ok(format!(
@@ -242,7 +269,9 @@ async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme, do_sub
             Err(e) => record(Step::Fail(format!("[{scheme}] ReadUtxos failed: {e}"))),
         }
     } else {
-        record(Step::Warn(format!("[{scheme}] no UTxOs at this credential -- nothing to re-read")));
+        record(Step::Warn(format!(
+            "[{scheme}] no UTxOs at this credential -- nothing to re-read"
+        )));
     }
 
     let fmt_tx_found = |scheme: Scheme, hash: TxHash, tx: &floe_dto_http::TxResponseDto| {
@@ -277,9 +306,9 @@ async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme, do_sub
             ))),
             Err(e) => record(Step::Fail(format!("[{scheme}] ReadTx failed: {e}"))),
         },
-        (None, None) => {
-            record(Step::Warn(format!("[{scheme}] no tx to check (no --tx-hash, no UTxO found)")))
-        }
+        (None, None) => record(Step::Warn(format!(
+            "[{scheme}] no tx to check (no --tx-hash, no UTxO found)"
+        ))),
     }
 
     if let Some(hash) = cli.datum_hash {
@@ -293,15 +322,25 @@ async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme, do_sub
                 )));
                 outcome.datum = Some(datum);
             }
-            Ok(None) => {
-                record(Step::Warn(format!("[{scheme}] ReadData {}: not found", hex::encode(hash))))
-            }
+            Ok(None) => record(Step::Warn(format!(
+                "[{scheme}] ReadData {}: not found",
+                hex::encode(hash)
+            ))),
             Err(e) => record(Step::Fail(format!("[{scheme}] ReadData failed: {e}"))),
         }
     }
 
     if let Some(cred) = stake_cred {
-        match client.stake_cred(cred, Paging { limit: Some(1), after: None }).await {
+        match client
+            .stake_cred(
+                cred,
+                Paging {
+                    limit: Some(1),
+                    after: None,
+                },
+            )
+            .await
+        {
             Ok(page) => {
                 let first = page.items.first().map(precis_item);
                 record(Step::Ok(format!(
@@ -312,12 +351,18 @@ async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme, do_sub
                 )));
                 outcome.stake_page = Some(page);
             }
-            Err(e) => record(Step::Fail(format!("[{scheme}] SearchUtxos (stake_cred) failed: {e}"))),
+            Err(e) => record(Step::Fail(format!(
+                "[{scheme}] SearchUtxos (stake_cred) failed: {e}"
+            ))),
         }
     }
 
     match client
-        .changes(ChangesParams { pay_cred: Some(pay_cred), stake_cred, ..Default::default() })
+        .changes(ChangesParams {
+            pay_cred: Some(pay_cred),
+            stake_cred,
+            ..Default::default()
+        })
         .await
     {
         Ok(resp) => {
@@ -329,9 +374,10 @@ async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme, do_sub
                     c.spent.len(),
                     c.spent.first().map(precis_item)
                 ))),
-                ChangesResponseDto::Stale(s) => {
-                    record(Step::Warn(format!("[{scheme}] UtxoChanges: stale ({:?})", s.reason)))
-                }
+                ChangesResponseDto::Stale(s) => record(Step::Warn(format!(
+                    "[{scheme}] UtxoChanges: stale ({:?})",
+                    s.reason
+                ))),
             }
             outcome.changes = Some(resp);
         }
@@ -342,13 +388,17 @@ async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme, do_sub
         let skey = cli.skey.expect("main validated --submit requires --skey");
         match floe_client::self_pay::run(client, skey, true).await {
             Ok(floe_client::self_pay::SelfPayResult::Submitted { r#ref: tx_ref }) => {
-                record(Step::Ok(format!("[{scheme}] SubmitTx: submitted, ref={tx_ref}")));
+                record(Step::Ok(format!(
+                    "[{scheme}] SubmitTx: submitted, ref={tx_ref}"
+                )));
             }
             Ok(floe_client::self_pay::SelfPayResult::Built { .. }) => {
                 unreachable!("self_pay::run(.., submit: true) always returns Submitted or Err")
             }
             Err(floe_client::self_pay::SelfPayError::NoFunds) => {
-                record(Step::Warn(format!("[{scheme}] SubmitTx: no funds at --skey's address, skipped")));
+                record(Step::Warn(format!(
+                    "[{scheme}] SubmitTx: no funds at --skey's address, skipped"
+                )));
             }
             Err(floe_client::self_pay::SelfPayError::InsufficientFunds) => {
                 record(Step::Warn(format!(
@@ -367,7 +417,10 @@ async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme, do_sub
 /// gRPC connect fails outright if the port isn't listening yet, unlike
 /// HTTP's `Client::new` -- needs its own retry loop before `run_smoke`.
 #[cfg(feature = "grpc")]
-async fn connect_grpc_with_retry(server: &str, ready_timeout_secs: u64) -> Result<floe_client::grpc::Client> {
+async fn connect_grpc_with_retry(
+    server: &str,
+    ready_timeout_secs: u64,
+) -> Result<floe_client::grpc::Client> {
     let timeout = Duration::from_secs(ready_timeout_secs);
     let start = Instant::now();
     loop {
@@ -399,7 +452,11 @@ async fn run_scheme(scheme: Scheme, cli: &Cli, do_submit: bool) -> Result<SmokeO
         Scheme::Grpc => {
             #[cfg(feature = "grpc")]
             {
-                let server = grpc_url(cli.grpc.as_deref().expect("Scheme::Grpc only chosen when --grpc is given"));
+                let server = grpc_url(
+                    cli.grpc
+                        .as_deref()
+                        .expect("Scheme::Grpc only chosen when --grpc is given"),
+                );
                 let mut client = connect_grpc_with_retry(&server, cli.ready_timeout_secs).await?;
                 run_smoke(&mut client, cli, scheme, do_submit).await
             }
@@ -409,7 +466,10 @@ async fn run_scheme(scheme: Scheme, cli: &Cli, do_submit: bool) -> Result<SmokeO
         Scheme::HttpJson => {
             #[cfg(feature = "http-json")]
             {
-                let server = cli.http_json.as_deref().expect("Scheme::HttpJson only chosen when --http-json is given");
+                let server = cli
+                    .http_json
+                    .as_deref()
+                    .expect("Scheme::HttpJson only chosen when --http-json is given");
                 let mut client = floe_client::http_json::Client::new(server);
                 run_smoke(&mut client, cli, scheme, do_submit).await
             }
@@ -419,7 +479,10 @@ async fn run_scheme(scheme: Scheme, cli: &Cli, do_submit: bool) -> Result<SmokeO
         Scheme::HttpCbor => {
             #[cfg(feature = "http-cbor")]
             {
-                let server = cli.http_cbor.as_deref().expect("Scheme::HttpCbor only chosen when --http-cbor is given");
+                let server = cli
+                    .http_cbor
+                    .as_deref()
+                    .expect("Scheme::HttpCbor only chosen when --http-cbor is given");
                 let mut client = floe_client::http_cbor::Client::new(server);
                 run_smoke(&mut client, cli, scheme, do_submit).await
             }
@@ -471,7 +534,9 @@ fn cross_check<T>(
 ) -> Step {
     let (base_scheme, base_val) = baseline;
     let Some(base_val) = base_val else {
-        return Step::Warn(format!("{field}: {base_scheme} has nothing to compare (absent data)"));
+        return Step::Warn(format!(
+            "{field}: {base_scheme} has nothing to compare (absent data)"
+        ));
     };
     let base_fp = fingerprint(base_val);
     let mut mismatches = Vec::new();
@@ -479,11 +544,16 @@ fn cross_check<T>(
         match val {
             Some(v) if fingerprint(v) == base_fp => {}
             Some(_) => mismatches.push(format!("{scheme} disagrees with {base_scheme}")),
-            None => mismatches.push(format!("{scheme} returned nothing but {base_scheme} didn't")),
+            None => mismatches.push(format!(
+                "{scheme} returned nothing but {base_scheme} didn't"
+            )),
         }
     }
     if mismatches.is_empty() {
-        Step::Ok(format!("cross-scheme {field}: all {} scheme(s) agree", others.len() + 1))
+        Step::Ok(format!(
+            "cross-scheme {field}: all {} scheme(s) agree",
+            others.len() + 1
+        ))
     } else {
         Step::Fail(format!("cross-scheme {field}: {}", mismatches.join("; ")))
     }
@@ -492,7 +562,9 @@ fn cross_check<T>(
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     let cli = Cli::parse();
@@ -501,7 +573,9 @@ async fn main() -> Result<()> {
         anyhow::bail!("--submit requires --skey (or $FLOE_SMOKE_SKEY)");
     }
     if cli.grpc.is_none() && cli.http_json.is_none() && cli.http_cbor.is_none() {
-        anyhow::bail!("need at least one of --grpc/--http-json/--http-cbor to know what to smoke-test");
+        anyhow::bail!(
+            "need at least one of --grpc/--http-json/--http-cbor to know what to smoke-test"
+        );
     }
 
     let mut schemes = Vec::new();
@@ -540,7 +614,12 @@ async fn main() -> Result<()> {
             ($field:ident, $fp:expr) => {
                 let others_field: Vec<(Scheme, Option<_>)> =
                     others.iter().map(|(s, o)| (*s, o.$field.clone())).collect();
-                let step = cross_check(stringify!($field), (*base_scheme, &base.$field), &others_field, $fp);
+                let step = cross_check(
+                    stringify!($field),
+                    (*base_scheme, &base.$field),
+                    &others_field,
+                    $fp,
+                );
                 if matches!(step, Step::Fail(_)) {
                     ok = false;
                 }

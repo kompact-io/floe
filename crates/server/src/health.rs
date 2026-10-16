@@ -9,8 +9,8 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
-pub use floe_dto_http::{Readiness, Stage};
 use floe_dto_http::{HealthDto, ReplicaHealthDto};
+pub use floe_dto_http::{Readiness, Stage};
 
 use crate::decode::TxHash;
 use crate::store::Mode;

@@ -7,7 +7,9 @@
 //! just gRPC (a behavior change from the old gRPC-only `Selfpay` -- see
 //! `../../plan-floe-client-as-lib.md`).
 
-use pallas_addresses::{Address, Network, ShelleyAddress, ShelleyDelegationPart, ShelleyPaymentPart};
+use pallas_addresses::{
+    Address, Network, ShelleyAddress, ShelleyDelegationPart, ShelleyPaymentPart,
+};
 use pallas_crypto::hash::Hasher;
 use pallas_crypto::key::ed25519::SecretKey;
 
@@ -57,10 +59,19 @@ pub async fn run<B: Backend>(
         ShelleyDelegationPart::Null,
     ));
     let address_bytes = address.to_vec();
-    let pay_cred: [u8; 28] = pay_cred.as_ref().try_into().expect("blake2b-224 is 28 bytes");
+    let pay_cred: [u8; 28] = pay_cred
+        .as_ref()
+        .try_into()
+        .expect("blake2b-224 is 28 bytes");
 
     let page = client
-        .pay_cred(pay_cred, Paging { limit: Some(1), after: None })
+        .pay_cred(
+            pay_cred,
+            Paging {
+                limit: Some(1),
+                after: None,
+            },
+        )
         .await?;
     let Some(item) = page.items.first() else {
         return Err(SelfPayError::NoFunds);
@@ -117,8 +128,12 @@ pub async fn run<B: Backend>(
 
     if submit {
         let resp = client.submit(tx).await?;
-        Ok(SelfPayResult::Submitted { r#ref: hex::encode(resp.r#ref) })
+        Ok(SelfPayResult::Submitted {
+            r#ref: hex::encode(resp.r#ref),
+        })
     } else {
-        Ok(SelfPayResult::Built { tx_hex: hex::encode(tx) })
+        Ok(SelfPayResult::Built {
+            tx_hex: hex::encode(tx),
+        })
     }
 }

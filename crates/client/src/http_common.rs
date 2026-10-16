@@ -49,7 +49,12 @@ pub(crate) async fn get(addr: &str, path: &str, accept: &str) -> Result<(u16, Ve
 /// matching `floe-server`'s own convention talking to amaru), only the
 /// response is format-negotiated -- same split `scheme::http`'s
 /// `submit_handler` makes server-side.
-pub(crate) async fn post(addr: &str, path: &str, body: &[u8], accept: &str) -> Result<(u16, Vec<u8>)> {
+pub(crate) async fn post(
+    addr: &str,
+    path: &str,
+    body: &[u8],
+    accept: &str,
+) -> Result<(u16, Vec<u8>)> {
     let mut stream = TcpStream::connect(addr).await?;
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/cbor\r\nAccept: {accept}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -68,7 +73,11 @@ fn push_query(qs: &mut Vec<String>, key: &str, value: impl std::fmt::Display) {
 
 /// `GET /utxos` for `pay_cred`/`stake_cred` (and, via `ref_path` below,
 /// `ref`) -- same query shape `floe-server`'s `scheme::http` parses.
-pub(crate) fn utxos_path(pay_cred: Option<Cred>, stake_cred: Option<Cred>, paging: &Paging) -> String {
+pub(crate) fn utxos_path(
+    pay_cred: Option<Cred>,
+    stake_cred: Option<Cred>,
+    paging: &Paging,
+) -> String {
     let mut qs = Vec::new();
     if let Some(p) = pay_cred {
         push_query(&mut qs, "pay_cred", hex::encode(p));

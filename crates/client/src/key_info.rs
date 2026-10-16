@@ -13,10 +13,7 @@ pub struct KeyInfo {
     pub vkh: String,
 }
 
-pub fn key_info(
-    skey: [u8; 32],
-    network: pallas_addresses::Network,
-) -> anyhow::Result<KeyInfo> {
+pub fn key_info(skey: [u8; 32], network: pallas_addresses::Network) -> anyhow::Result<KeyInfo> {
     let vk = SecretKey::from(skey).public_key();
     let pay_cred = Hasher::<224>::hash(vk.as_ref());
     let address = Address::Shelley(ShelleyAddress::new(

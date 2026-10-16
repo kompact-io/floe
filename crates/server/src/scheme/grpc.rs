@@ -88,9 +88,7 @@ pub async fn serve(
             max_page_size,
         }));
     if let Some(amaru_submit_api) = amaru_submit_api {
-        server = server.add_service(SubmitServiceServer::new(submit::Svc::new(
-            amaru_submit_api,
-        )));
+        server = server.add_service(SubmitServiceServer::new(submit::Svc::new(amaru_submit_api)));
     }
     server.serve(addr).await?;
     Ok(())
