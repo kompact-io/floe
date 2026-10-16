@@ -1,0 +1,80 @@
+// floe's own addition (not part of the UTxORPC spec): a typed,
+// scheme-independent health/metrics surface mirroring floe-server's
+// HTTP `/health`/`/metrics` routes method-for-route. Kept as its own
+// service, not folded into `query.proto`'s `QueryService` -- this is
+// orchestration/observability, not chain data.
+
+syntax = "proto3";
+
+package floe.v1.health;
+
+import "google/protobuf/empty.proto";
+
+// `run` mode's own seed/catchup/running lifecycle, plus chain-freshness
+// relative to its peer.
+enum Stage {
+  STAGE_UNSPECIFIED = 0;
+  STAGE_SEEDING = 1;
+  STAGE_CATCHUP = 2;
+  STAGE_RUNNING = 3;
+}
+
+// `serve` (read-replica) mode's own readiness: no seed/catchup/running
+// lifecycle at all (no sync loop) -- just "can I read the DB right now."
+enum Readiness {
+  READINESS_UNSPECIFIED = 0;
+  READINESS_READY = 1;
+  READINESS_UNAVAILABLE = 2;
+}
+
+message RunHealth {
+  Stage stage = 1;
+  uint64 tip_slot = 2;
+  uint64 block_no = 3;
+  bytes tip_hash = 4;
+  uint64 peer_tip_block_no = 5;
+}
+
+message ReplicaHealth {
+  Readiness readiness = 1;
+  optional uint64 tip_slot = 2;
+  uint64 utxo_count = 3;
+  uint32 upstream_mode = 4;
+}
+
+// `run` and `serve` modes report different shapes -- see
+// `ReplicaHealth`'s comment -- not the same message with unreachable
+// fields left unset.
+message HealthResponse {
+  oneof mode {
+    RunHealth run = 1;
+    ReplicaHealth replica = 2;
+  }
+}
+
+// The transport a request arrived over.
+enum Scheme {
+  SCHEME_UNSPECIFIED = 0;
+  SCHEME_GRPC = 1;
+  SCHEME_HTTP_JSON = 2;
+  SCHEME_HTTP_CBOR = 3;
+}
+
+message RequestCount {
+  Scheme scheme = 1;
+  string method = 2;
+  uint64 count = 3;
+}
+
+message MetricsResponse {
+  uint64 applied_total = 1;
+  uint64 rolled_back_total = 2;
+  uint64 utxos_created_total = 3;
+  uint64 utxo_count = 4;
+  repeated RequestCount requests = 5;
+}
+
+service HealthService {
+  rpc GetHealth(google.protobuf.Empty) returns (HealthResponse);
+  rpc GetMetrics(google.protobuf.Empty) returns (MetricsResponse);
+}

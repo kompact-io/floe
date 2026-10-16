@@ -1,0 +1,6 @@
+.envrc
+target/
+result
+*.sqlite*
+/crates/server/db
+.direnv/

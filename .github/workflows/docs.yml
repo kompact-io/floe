@@ -1,0 +1,73 @@
+name: Docs
+
+# Every push/PR, not tag-gated like release.yml -- docs should stay
+# buildable continuously, not just at release time. Nothing here is a
+# hand-maintained spec: rustdoc renders the doc comments already in the
+# source, and the JSON Schema is generated straight from the live
+# struct/enum definitions of whichever crate has the `schema` example
+# (see its own module doc). Both fail loudly if the source changes in a
+# way that breaks them, which is the point -- there's nothing else for
+# either to drift against.
+on:
+  push:
+  pull_request:
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # -D warnings: catches broken intra-doc links and other rustdoc
+      # errors on every push, not just when someone happens to run
+      # `cargo doc` locally. `--release`: the debug profile's build-script
+      # CFLAGS (-O0) trip a real `tikv-jemalloc-sys`/glibc `_FORTIFY_SOURCE`
+      # incompatibility (confirmed locally) that the release profile's
+      # flags don't -- sidesteps it rather than fixing jemalloc's build.
+      - run: nix develop -c env RUSTDOCFLAGS="-D warnings" cargo doc --release --workspace --no-deps
+      # `cargo doc`'s output always lands in `target/doc`, not
+      # `target/<profile>/doc` -- `--release` only affects how
+      # dependencies get built for doc generation, not where the HTML
+      # goes (confirmed by actually running this, not assumed).
+      - run: mkdir -p dist && cp -r target/doc dist/rustdoc
+      # No `-p <crate>`: cargo resolves `--example schema` on its own as
+      # long as exactly one workspace crate has it, so renaming that
+      # crate (as already happened once -- it used to be `floe-dto`)
+      # can't break this again. If a second crate ever adds its own
+      # `schema` example, cargo fails loudly asking which one, same
+      # fail-loud spirit as everything else here.
+      - run: nix develop -c cargo run --release --example schema > dist/schema.json
+      # `cargo doc` on a multi-crate workspace produces no root
+      # `index.html` of its own (only per-crate directories under
+      # `rustdoc/`) -- GitHub Pages needs one at the published root, so
+      # `docs/index.html` (checked in, not generated) is a real landing
+      # page linking to each crate's docs and `schema.json`, copied to
+      # that root.
+      - run: cp docs/index.html dist/index.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docs
+          path: dist/*
+
+  publish:
+    needs: docs
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: docs
+          path: dist
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

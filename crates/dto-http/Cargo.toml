@@ -1,0 +1,25 @@
+[package]
+name = "floe-dto-http"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+
+# `json`/`cbor` are independent: a consumer that only wants one wire
+# format doesn't pull the other's deps (serde vs. minicbor). `hex` and
+# `pallas-addresses` stay unconditional -- hex
+# formatting backs JSON's byte encoding and error messages regardless,
+# and address bech32 rendering is needed by both wire formats (see
+# `AddressDto`). See ../../plan-dto-http.md.
+[features]
+json = ["dep:serde"]
+cbor = ["dep:minicbor"]
+# Independent of `json`/`cbor`: `Display` (Prometheus text) needs
+# neither, so a consumer wanting only health/metrics doesn't pull in
+# query-DTO wire format machinery, or vice versa.
+metrics = []
+
+[dependencies]
+hex = { workspace = true }
+minicbor = { workspace = true, optional = true }
+pallas-addresses = { workspace = true }
+serde = { workspace = true, optional = true }

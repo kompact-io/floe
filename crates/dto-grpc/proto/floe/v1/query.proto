@@ -1,0 +1,326 @@
+/// A consistent view of the state of the ledger
+///
+/// floe's own fork of UTxORPC's `query.proto`, not the vendored spec
+/// file (see `docs/utxorpc-spec/utxorpc/v1/query/query.proto` for the
+/// pristine upstream copy, kept only as a diff baseline -- see
+/// `docs/utxorpc-divergences.md`). Diverges on purpose where floe's
+/// needs differ; stays textually identical to upstream everywhere
+/// else, so that diff is the real documentation of what changed.
+
+syntax = "proto3";
+
+package floe.v1.query;
+
+import "google/protobuf/field_mask.proto";
+import "floe/v1/cardano.proto";
+
+// Represents a specific point in the blockchain. The zero value (slot
+// 0, empty hash, height 0) is the sentinel for "point unknown" -- see
+// `AnyUtxoData`/`AnyChainTx`'s `block_ref`.
+message ChainPoint {
+  uint64 slot = 1; // Slot number.
+  bytes hash = 2; // Block hash.
+  uint64 height = 3; // Block height.
+  uint64 timestamp = 4; // Block ms timestamp
+}
+
+message AnyChainBlock {
+  bytes native_bytes = 1; // Original bytes as defined by the chain
+  oneof chain {
+    floe.v1.cardano.Block cardano = 2; // A parsed Cardano block.
+  }
+}
+
+// Represents a reference to a transaction output
+message TxoRef {
+  bytes hash = 1; // Tx hash.
+  uint32 index = 2; // Output index.
+}
+
+// Request to get the chain parameters
+message ReadParamsRequest {
+  google.protobuf.FieldMask field_mask = 1; // Field mask to selectively return fields in the parsed response.
+}
+
+// Request to get the chain config
+message ReadGenesisRequest {
+  google.protobuf.FieldMask field_mask = 1; // Field mask to selectively return fields in the parsed response.
+}
+
+// Request to get the era summary
+message ReadEraSummaryRequest {
+  google.protobuf.FieldMask field_mask = 1; // Field mask to selectively return fields in the parsed response.
+}
+
+// Response containing the genesis configs
+message ReadGenesisResponse {
+  bytes genesis = 1; // genesis hash for the chain
+  string caip2 = 2; // the caip-2 ID for this network
+  oneof config {
+    floe.v1.cardano.Genesis cardano = 3; // Cardano genesis
+  }
+}
+
+// Response containing the era summaries
+message ReadEraSummaryResponse {
+  oneof summary {
+    floe.v1.cardano.EraSummaries cardano = 1; // Cardano era summaries
+  }
+}
+
+// An evenlope that holds parameter data from any of the compatible chains
+message AnyChainParams {
+  oneof params {
+    floe.v1.cardano.PParams cardano = 1; // Cardano parameters
+  }
+}
+
+// Response containing the chain parameters
+message ReadParamsResponse {
+  AnyChainParams values = 1; // The value of the parameters.
+  ChainPoint ledger_tip = 2; // The chain point that represent the ledger current position.
+}
+
+// An envelope that wraps a chain-specific ledger-state query.
+message AnyChainStateQuery {
+  oneof query {
+    floe.v1.cardano.StateQuery cardano = 1; // A Cardano ledger-state query.
+  }
+}
+
+// An envelope that wraps a chain-specific ledger-state query result.
+message AnyChainStateData {
+  oneof result {
+    floe.v1.cardano.StateData cardano = 1; // A Cardano ledger-state query result.
+  }
+}
+
+// Request to run a chain-specific ledger-state query against the current ledger snapshot.
+message ReadStateRequest {
+  AnyChainStateQuery query = 1; // The chain-specific query to evaluate.
+  google.protobuf.FieldMask field_mask = 2; // Field mask to selectively return fields.
+}
+
+// Response carrying the ledger-state query result.
+message ReadStateResponse {
+  AnyChainStateData result = 1; // The query result.
+  ChainPoint ledger_tip = 2; // Chain point representing the snapshot the query was evaluated against.
+}
+
+// An evenlope that holds an UTxO patterns from any of compatible chains
+message AnyUtxoPattern {
+  oneof utxo_pattern {
+    floe.v1.cardano.TxOutputPattern cardano = 1;
+  }
+}
+
+// Represents a simple utxo predicate that can composed to create more complex ones
+message UtxoPredicate {
+  optional AnyUtxoPattern match = 1; // Predicate is true if tx exhibits pattern.
+  repeated UtxoPredicate not = 2; // Predicate is true if tx doesn't exhibit pattern.
+  repeated UtxoPredicate all_of = 3; // Predicate is true if utxo exhibits all of the patterns.
+  repeated UtxoPredicate any_of = 4; // Predicate is true if utxo exhibits any of the patterns.
+}
+
+// An evenlope that holds an UTxO from any of compatible chains
+message AnyUtxoData {
+  bytes native_bytes = 1; // Original bytes as defined by the chain
+  TxoRef txo_ref = 2; // Hash of the previous transaction.
+  oneof parsed_state {
+    floe.v1.cardano.TxOutput cardano = 3; // A cardano UTxO
+  }
+  ChainPoint block_ref = 4; // The chain point that represents the block this UTxO was created in. Zero-valued ("unknown") once that block has been pruned, or if it predates floe's own history (e.g. inherited via a seed snapshot).
+
+  // --- floe divergence from upstream `query.proto` ---
+  // Not a bare boolean: the hash is a pivot into `ReadTx` (and,
+  // eventually, the spending tx's redeemer) -- a boolean would tell a
+  // caller nothing further. floe never returns an item without first
+  // resolving its spent status, so absent means genuinely,
+  // confirmedly unspent, never "unknown". No separate `spent_slot`
+  // field: `spent_by` -> `ReadTx` -> its own `block_ref` is enough to
+  // recover the spending tx's full ChainPoint (two primary-key
+  // lookups chained, see `query::block_point`/`by_tx_hash` in
+  // `floe-server`) -- a cached slot here would just be an
+  // independently-stale copy of that. See plan-rpc.md, "Why UTxORPC
+  // alone doesn't fit".
+  optional bytes spent_by = 5; // Hash of the tx that spent this output, if any.
+}
+
+// Request to get specific UTxOs
+message ReadUtxosRequest {
+  repeated TxoRef keys = 1; // List of keys UTxOs.
+  google.protobuf.FieldMask field_mask = 2; // Field mask to selectively return fields.
+}
+
+// Response containing the UTxOs associated with the requested addresses.
+message ReadUtxosResponse {
+  repeated AnyUtxoData items = 1; // List of UTxOs.
+  ChainPoint ledger_tip = 2; // The chain point that represent the ledger current position.
+}
+
+// Request to search for UTxO based on a pattern.
+message SearchUtxosRequest {
+  optional UtxoPredicate predicate = 1; // Pattern to match UTxOs by.
+  google.protobuf.FieldMask field_mask = 2; // Field mask to selectively return fields.
+  optional int32 max_items = 3; // The maximum number of items to return.
+  optional string start_token = 4; // The next_page_token value returned from a previous request, if any.
+}
+
+// Response containing the UTxOs that match the requested addresses.
+message SearchUtxosResponse {
+  repeated AnyUtxoData items = 1; // List of UTxOs.
+  ChainPoint ledger_tip = 2; // The chain point that represent the ledger current position.
+  optional string next_token = 3; // Token to retrieve the next page of results, absent if there are no more results.
+}
+
+// Request to get a datum
+message ReadDataRequest {
+  bytes key = 1; // Hash of the datum to fetch.
+  google.protobuf.FieldMask field_mask = 2; // Field mask to selectively return fields in the response.
+}
+
+// An evenlope that holds a datum for any of the compatible chains
+message AnyChainDatum {
+  bytes native_bytes = 1; // Original bytes as defined by the chain
+  bytes key = 2;
+  oneof parsed_state {
+    floe.v1.cardano.PlutusData cardano = 3; // A cardano UTxO
+  }
+}
+
+// Response containing the requested datum
+message ReadDataResponse {
+  AnyChainDatum value = 1; // The value of the datum.
+  ChainPoint ledger_tip = 2; // The chain point that represent the ledger current position.
+}
+
+// Request to get a transaction by hash
+message ReadTxRequest {
+  bytes hash = 1; // The hash of the transaction.
+  google.protobuf.FieldMask field_mask = 2; // Field mask to selectively return fields in the response.
+}
+
+// Represents a transaction from any supported blockchain.
+message AnyChainTx {
+  bytes native_bytes = 1; // Original bytes as defined by the chain
+  oneof chain {
+    floe.v1.cardano.Tx cardano = 2; // A Cardano transaction.
+  }
+  ChainPoint block_ref = 3; // The chain point that represents the block this transaction belongs to. Zero-valued ("unknown") once that block has been pruned, or if it predates floe's own history (e.g. inherited via a seed snapshot).
+}
+
+// Response containing the transaction associated with the requested hash.
+message ReadTxResponse {
+  AnyChainTx tx = 1; // The transaction.
+  ChainPoint ledger_tip = 2; // The chain point that represent the ledger current position.
+}
+
+// --- floe addition (not in the utxorpc spec) ---
+//
+// A reorg-safe resync point for `UtxoChanges`'s `since`. Not
+// `ChainPoint`: that's a complete, always-populated *output*
+// descriptor; this is an *input* filter where both fields are
+// independently optional. See plan-rpc.md, "`Point`: the type that
+// makes 'since X' reorg-safe".
+//
+// - `hash` present (with or without `slot`) -> strict: the server
+//   verifies `hash` is still on the canonical chain before doing
+//   anything else. Not found (or, if `slot` was also given, found at
+//   a different slot) -> `UtxoChangesResponse.stale`, never silently
+//   treated as "nothing changed".
+// - `hash` absent, `slot` present -> permissive: a bare `slot > N`
+//   numeric filter, no chain-validity check at all. Entirely the
+//   caller's own responsibility to use only when that's safe --
+//   `UtxoChanges` does not make this choice for them.
+// - both absent -> no lower bound at all (every live/ever-spent row
+//   matching the address, from genesis).
+message Point {
+  optional uint64 slot = 1;
+  optional bytes hash = 2;
+}
+
+// Request for a one-shot "what changed (created or spent) at this
+// address since `since`" diff. Deliberately not a multi-round
+// chain-sync negotiation -- one request, one `Point`, one atomic
+// answer; if `since` turns out to be stale, the caller's own job is
+// to find an earlier intersection and retry, not something this RPC
+// negotiates for them. `address` carries the same restrictions as
+// `SearchUtxos`'s address-pattern predicate (`payment_part`/
+// `delegation_part` only -- no `exact_address`, no asset/cert
+// patterns, since this is a bare `AddressPattern`, not a composable
+// `UtxoPredicate`).
+//
+// `created`/`spent` paginate independently (two unrelated result
+// sets from two unrelated queries, not one combined stream) -- each
+// has its own cursor, both opaque strings taken verbatim from a
+// previous response's `Changes.created_next_token`/
+// `spent_next_token`. `max_items` applies to each list separately
+// (so up to `2 * max_items` rows total), same clamp-not-reject
+// behavior as `SearchUtxos.max_items` -- see `floe-server`'s
+// `--max-page-size` (also caps `SearchUtxos`).
+message UtxoChangesRequest {
+  floe.v1.cardano.AddressPattern address = 1;
+  Point since = 2;
+  optional int32 max_items = 3;
+  optional string created_start_token = 4;
+  optional string spent_start_token = 5;
+}
+
+// The diff itself, once `since` checked out.
+message Changes {
+  repeated AnyUtxoData created = 1; // Newly live since `since` (and still live now).
+  repeated AnyUtxoData spent = 2; // Live as of `since`, spent since then (content + spent_by, so the caller knows what to remove).
+  ChainPoint ledger_tip = 3; // The chain point that represents the ledger's current position.
+  optional string created_next_token = 4; // Cursor for `created`'s next page, absent once exhausted.
+  optional string spent_next_token = 5; // Cursor for `spent`'s next page, absent once exhausted.
+}
+
+// Why `since` didn't check out -- see `Point`'s doc comment.
+enum StaleReason {
+  // `since.hash` was given with no `since.slot` to compare against
+  // the server's retention window, so there's nothing to classify
+  // further with: not found, full stop.
+  STALE_REASON_UNSPECIFIED = 0;
+  // `since.slot` is within the server's retained history, but
+  // `since.hash` doesn't match what's there at that slot (or isn't
+  // there at all) -- this *is* a reorg: the server has data covering
+  // that slot and this hash isn't part of it.
+  STALE_REASON_ROLLED_BACK = 1;
+  // `since.slot` predates the oldest slot the server still retains
+  // -- genuinely out of history. Whether it was ever canonical isn't
+  // knowable either way at this point; it's gone regardless, so
+  // there's no reorg/not-a-reorg distinction left to make.
+  STALE_REASON_TOO_OLD = 2;
+}
+
+message Stale {
+  StaleReason reason = 1;
+  // The oldest slot the server still has `block` rows for, i.e. the
+  // retention horizon `reason` was judged against. Absent only for
+  // `STALE_REASON_UNSPECIFIED` (no `since.slot` was given to compare).
+  optional uint64 oldest_retained_slot = 2;
+}
+
+message UtxoChangesResponse {
+  oneof result {
+    Changes changes = 1;
+    Stale stale = 2; // `since` isn't usable -- find an earlier intersection and retry (see `Stale.reason`).
+  }
+}
+
+// Service definition for querying the state of the chain.
+service QueryService {
+  rpc ReadParams(ReadParamsRequest) returns (ReadParamsResponse); // Get overall chain state.
+  rpc ReadUtxos(ReadUtxosRequest) returns (ReadUtxosResponse); // Read specific UTxOs by reference.
+  rpc SearchUtxos(SearchUtxosRequest) returns (SearchUtxosResponse); // Search for UTxO based on a pattern.
+  rpc ReadData(ReadDataRequest) returns (ReadDataResponse); // Read a specific datum by hash
+  rpc ReadTx(ReadTxRequest) returns (ReadTxResponse); // Get Txs by chain-specific criteria.
+  rpc ReadGenesis(ReadGenesisRequest) returns (ReadGenesisResponse); // Get the genesis configuration
+  rpc ReadEraSummary(ReadEraSummaryRequest) returns (ReadEraSummaryResponse); // Get the chain era summary
+  rpc ReadState(ReadStateRequest) returns (ReadStateResponse); // Run a chain-specific ledger-state query (e.g. stake pool distribution).
+  rpc UtxoChanges(UtxoChangesRequest) returns (UtxoChangesResponse); // floe addition: one-shot reorg-safe "what changed since this Point" diff.
+
+  // TODO: decide if we want to expand the scope
+  // rpc DumpUtxos(ReadUtxosRequest) returns (stream ReadUtxosResponse); // Dump all available utxos
+  // rpc ReadAccount(ReadAccountRequest) returns (ReadAccountReponse); // Get state of a particular account
+}

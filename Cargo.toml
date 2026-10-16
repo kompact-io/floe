@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/client",
+  "crates/dto-grpc",
+  "crates/dto-http",
+  "crates/integration",
+  "crates/server",
+]
+
+# crane (flake.nix) can't infer a name/version from this manifest the way
+# it does for a single package -- there's no `[package]` table here, only
+# `[workspace]`. This is crane's own documented metadata hook for exactly
+# that (the alternative is passing `pname`/`cargoToml` by hand at every
+# call site, which flake.nix already does for the actual build/deps
+# derivations; this covers the ones that don't go through `commonArgs`,
+# like `devShell`).
+[workspace.metadata.crane]
+name = "floe-workspace"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+description = "Minimal Cardano UTxO index (mini-index) and its clients"
+
+[workspace.dependencies]
+anyhow = "1"
+axum = "0.8"
+axum-extra = { version = "0.10", features = ["query"] }
+clap = { version = "4", features = ["derive", "env"] }
+hex = "0.4"
+floe-client = { path = "crates/client" }
+floe-dto-grpc = { path = "crates/dto-grpc" }
+floe-dto-http = { path = "crates/dto-http" }
+floe-server = { path = "crates/server" }
+http = "1"
+minicbor = { version = "2.3.0", features = ["derive", "alloc", "half"] }
+pallas-network = "1.4"
+pallas-traverse = "1.4"
+pallas-crypto = "1.4"
+pallas-addresses = "1.4"
+pallas-primitives = "1.4"
+pallas-codec = "1.4"
+proptest = "1"
+rayon = "1"
+rusqlite = { version = "0.40", features = ["bundled", "fallible_uint", "load_extension"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tar = "0.4"
+tikv-jemallocator = "0.7.0"
+tikv-jemalloc-ctl = "0.7.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+tonic = "0.14"
+tower = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zstd = "0.14"

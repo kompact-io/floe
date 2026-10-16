@@ -1,0 +1,54 @@
+[package]
+name = "floe-client"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+
+# Keeps the library import path (`use floe_client::...`) and the bin
+# name (`floe-client`, matching every existing invocation) distinct --
+# same `[lib]` + `[[bin]]` split as `floe-server`, see
+# `../../plan-floe-client-as-lib.md`.
+[lib]
+name = "floe_client"
+path = "src/lib.rs"
+
+[[bin]]
+name = "floe-client"
+path = "src/main.rs"
+required-features = ["clap", "serde_json"]
+
+# Deployment smoke test against a running `floe-server`, see
+# `src/bin/smoke.rs`.
+[[bin]]
+name = "floe-smoke"
+path = "src/bin/smoke.rs"
+required-features = ["clap", "serde_json"]
+
+[features]
+default = ["grpc", "http-json", "http-cbor", "clap", "serde_json"]
+grpc = ["dep:floe-dto-grpc", "dep:tonic", "floe-dto-http/json"]
+http-json = ["floe-dto-http/json"]
+# Pulls in `floe-dto-http/json` too, not just `/cbor`: the bin always
+# prints JSON regardless of which wire format was used on the wire
+# (see `main.rs`), so `Output`'s payloads need `Serialize` even in a
+# `--features http-cbor` (no `json`) build. Cheap -- `json` is just
+# `serde`, no heavy new deps.
+http-cbor = ["floe-dto-http/cbor", "floe-dto-http/json"]
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, optional = true }
+floe-dto-grpc = { workspace = true, optional = true }
+floe-dto-http = { workspace = true }
+hex = { workspace = true }
+minicbor = { workspace = true }
+pallas-addresses = { workspace = true }
+pallas-crypto = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true }
+tonic = { workspace = true, optional = true }
+# Only `floe-smoke` uses these (its `required-features` already pulls
+# in `clap`/`serde_json`); the library itself never logs.
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

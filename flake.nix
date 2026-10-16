@@ -1,0 +1,160 @@
+{
+  description = "floe: minimal Cardano UTxO index";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    crane.url = "github:ipetkov/crane";
+    flake-utils.url = "github:numtide/flake-utils";
+    # Only needed for cross/non-host toolchains (e.g. musl static builds);
+    # nixpkgs' own rustc only ships the host's target, so a cross target's
+    # std has to come from somewhere that lets you pick targets a la carte.
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs = { self, nixpkgs, crane, flake-utils, fenix }:
+    (flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+
+        # Plain `cleanCargoSource` drops `tests/data/*.hex`/`*.bin` --
+        # non-Rust, non-TOML, so its default filter doesn't know
+        # `decode.rs`'s/`tvar.rs`'s `include_bytes!`/`include_str!` need
+        # them. Only matters for `--all-targets` (clippy, `cargo test`
+        # without `--bin`/`--example`); plain `--bin floe` doesn't touch
+        # those tests so the gap was invisible until clippy ran as a nix
+        # build rather than directly via `cargo clippy` in the dev shell.
+        # `commonCargoSources` itself already covers the whole workspace
+        # (every member's Cargo.toml + src, from the root Cargo.toml/
+        # Cargo.lock) -- only these non-Rust inputs need listing by hand:
+        # the fixture directory above, and `dto-grpc`'s `.proto` sources
+        # (`build.rs` reads them at compile time via `protox`).
+        src = nixpkgs.lib.fileset.toSource {
+          root = ./.;
+          fileset = nixpkgs.lib.fileset.unions [
+            ((crane.mkLib pkgs).fileset.commonCargoSources ./.)
+            ./crates/server/tests/data
+            ./crates/dto-grpc/proto
+          ];
+        };
+
+        # One crate set (floe + the two probe examples + their checks),
+        # parameterized by craneLib so the same definitions serve the host
+        # toolchain and any cross toolchain below -- nothing about *what*
+        # gets built differs per target, only *which compiler* builds it.
+        mkCrateSet = { craneLib, extraArgs ? { } }:
+          let
+            commonArgs = {
+              inherit src;
+              strictDeps = true;
+              # buildInputs = [ pkgs.sqlite ];  # once rusqlite is linked non-bundled
+              # Root `Cargo.toml` is now the virtual workspace manifest
+              # (no `[package]` table), so crane can't infer a name/
+              # version from it the way it does for a single package --
+              # this is just a label for the shared deps-only cache
+              # artifact below, not tied to any one member.
+              pname = "floe-workspace";
+              version = "0.1.0";
+              cargoToml = ./Cargo.toml;
+              cargoLock = ./Cargo.lock;
+            } // extraArgs;
+            cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+            mkPkg = { pname, cargoExtraArgs }:
+              craneLib.buildPackage (commonArgs // { inherit pname cargoArtifacts cargoExtraArgs; version = "0.1.0"; });
+          in
+          rec {
+            inherit commonArgs cargoArtifacts craneLib;
+            chainsync-probe = mkPkg { pname = "chainsync-probe"; cargoExtraArgs = "--locked -p floe-server --example chainsync_probe"; };
+            seed-probe = mkPkg { pname = "seed-probe"; cargoExtraArgs = "--locked -p floe-server --example seed_probe"; };
+            floe = mkPkg { pname = "floe"; cargoExtraArgs = "--locked -p floe-server --bin floe"; };
+            floe-client = mkPkg { pname = "floe-client"; cargoExtraArgs = "--locked -p floe-client --bin floe-client"; };
+            floe-smoke = mkPkg { pname = "floe-smoke"; cargoExtraArgs = "--locked -p floe-client --bin floe-smoke"; };
+            checks = {
+              inherit chainsync-probe seed-probe floe floe-client floe-smoke;
+              clippy = craneLib.cargoClippy (commonArgs // {
+                inherit cargoArtifacts;
+                cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+              });
+            };
+          };
+
+        native = mkCrateSet { craneLib = crane.mkLib pkgs; };
+
+        # Cross targets: triple -> the nixpkgs cross package set that
+        # supplies a matching C toolchain (for rusqlite's bundled sqlite,
+        # zstd-sys, and tikv-jemalloc-sys -- all of which compile C, which
+        # fenix's rustc alone doesn't provide a cross linker for). Add an
+        # entry here (and, if it's a genuinely new architecture rather than
+        # just musl-vs-glibc on one already covered, a `cross.<name>`
+        # package below) to support another target.
+        crossPkgsByTarget = {
+          "x86_64-unknown-linux-musl" = pkgs.pkgsCross.musl64;
+        };
+
+        mkCrossCrateSet = target:
+          let
+            crossPkgs = crossPkgsByTarget.${target};
+            cc = "${crossPkgs.stdenv.cc}/bin/${crossPkgs.stdenv.cc.targetPrefix}cc";
+            targetEnvSuffix = builtins.replaceStrings [ "-" ] [ "_" ] target;
+            targetEnvUpper = nixpkgs.lib.toUpper targetEnvSuffix;
+            toolchain = fenix.packages.${system}.combine [
+              fenix.packages.${system}.stable.toolchain
+              fenix.packages.${system}.targets.${target}.stable.rust-std
+            ];
+            craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
+          in
+          mkCrateSet {
+            inherit craneLib;
+            extraArgs = {
+              CARGO_BUILD_TARGET = target;
+              "CARGO_TARGET_${targetEnvUpper}_LINKER" = cc;
+              "CC_${targetEnvSuffix}" = cc;
+              TARGET_CC = cc;
+            };
+          };
+
+        cross = nixpkgs.lib.mapAttrs (target: _: mkCrossCrateSet target) crossPkgsByTarget;
+      in
+      {
+        packages = {
+          default = native.floe;
+          inherit (native) chainsync-probe seed-probe floe floe-client floe-smoke;
+        } // nixpkgs.lib.mapAttrs' (target: pkgs':
+          nixpkgs.lib.nameValuePair "floe-${target}" pkgs'.floe
+        ) cross;
+
+        apps.default = {
+          type = "app";
+          program = "${native.floe}/bin/floe";
+        };
+
+        checks = native.checks // { fmt = (crane.mkLib pkgs).cargoFmt { inherit src; }; } // nixpkgs.lib.concatMapAttrs (target: pkgs':
+          nixpkgs.lib.mapAttrs' (name: v: nixpkgs.lib.nameValuePair "${name}-${target}" v) pkgs'.checks
+        ) cross;
+
+        devShells.default = native.craneLib.devShell {
+          checks = self.checks.${system};
+          packages = [ pkgs.rust-analyzer pkgs.sqlite ];
+          # jemalloc's bundled `configure` probes compile at -O0 (debug
+          # profile) under `-Werror`; glibc's features.h treats
+          # _FORTIFY_SOURCE at -O0 as a hard warning, which then aborts
+          # every configure check (first symptom: "cannot determine
+          # return type of strerror_r"). Nix's cc-wrapper injects
+          # _FORTIFY_SOURCE unconditionally via NIX_HARDENING_ENABLE, so
+          # disable just that flag here -- `nix build`'s release profile
+          # compiles at -O3 and never hits this, so it's left alone.
+          hardeningDisable = [ "fortify" "fortify3" ];
+        };
+      }))
+    # Not per-system: a plain function (lib.mkArgs, ./nix/lib.nix) and a
+    # NixOS module (nixosModules.default, ./nix/modules/floe.nix —
+    # services.floe.*). A process-compose or other orchestrator builds
+    # argv via lib.mkArgs directly, against its own process schema.
+    // {
+      lib.mkArgs = (import ./nix/lib.nix { inherit (nixpkgs) lib; }).mkArgs;
+      nixosModules.default = import ./nix/modules/floe.nix;
+      nixosModules.floe = self.nixosModules.default;
+    };
+}

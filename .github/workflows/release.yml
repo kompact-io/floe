@@ -1,0 +1,104 @@
+name: Release
+
+# Tags only (v1.2.3-style) -- this builds release binaries and publishes
+# them to a GitHub Release, not a general CI-on-every-push gate.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # fmt/clippy run with --all-targets (see flake.nix), so they also
+      # type-check the lib's tests; this runs them for real.
+      - run: nix build .#checks.x86_64-linux.fmt .#checks.x86_64-linux.clippy -L
+      # floe-integration finds the `floe`/`floe-client` binaries by hand-
+      # rolled path (`target/release/<bin>`), not via Cargo's dependency
+      # graph -- so nothing otherwise guarantees they're already built
+      # before its tests run in the same `cargo test` invocation. Building
+      # the whole workspace first makes that explicit instead of relying
+      # on incidental build ordering.
+      - run: nix develop -c cargo build --release --workspace
+      - run: nix develop -c cargo test --release
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - flake_attr: floe
+            asset_name: floe-x86_64-unknown-linux-gnu
+          - flake_attr: floe-x86_64-unknown-linux-musl
+            asset_name: floe-x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: nix build .#${{ matrix.flake_attr }} -L
+      - run: |
+          mkdir -p dist
+          cp result/bin/floe "dist/${{ matrix.asset_name }}"
+          sha256sum "dist/${{ matrix.asset_name }}" > "dist/${{ matrix.asset_name }}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/*
+
+  # Builds the Litestream VFS loadable extension (serve-mode's --vfs-extension)
+  # from litestream's own source -- nixpkgs only packages its CLI, not this.
+  # Recipe is litestream's own Makefile `vfs-linux-amd64` target, verified
+  # against a real `litestream replicate` + `floe serve` round-trip on
+  # 2026-10-08 (see PLAN.md); pinned to a tagged release, not main, so this
+  # doesn't silently change out from under us.
+  build-litestream-vfs:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      LITESTREAM_REF: v0.5.17
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: benbjohnson/litestream
+          ref: ${{ env.LITESTREAM_REF }}
+          path: litestream-src
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: litestream-src/go.mod
+      - name: Build the VFS loadable extension
+        working-directory: litestream-src
+        run: |
+          mkdir -p dist
+          go build -tags vfs,SQLITE3VFS_LOADABLE_EXT -o dist/litestream-vfs-linux-amd64.a -buildmode=c-archive ./cmd/litestream-vfs
+          cp dist/litestream-vfs-linux-amd64.h src/litestream-vfs.h
+          gcc -DSQLITE3VFS_LOADABLE_EXT -g -fPIC -shared -o dist/litestream-vfs-linux-amd64.so \
+            src/litestream-vfs.c dist/litestream-vfs-linux-amd64.a -lpthread -ldl -lm
+      - run: |
+          mkdir -p dist
+          cp litestream-src/dist/litestream-vfs-linux-amd64.so dist/
+          sha256sum dist/litestream-vfs-linux-amd64.so > dist/litestream-vfs-linux-amd64.so.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: litestream-vfs-linux-amd64.so
+          path: dist/*
+
+  release:
+    needs: [build, build-litestream-vfs]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
