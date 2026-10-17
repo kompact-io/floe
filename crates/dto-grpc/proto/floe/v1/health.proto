@@ -19,14 +19,6 @@ enum Stage {
   STAGE_RUNNING = 3;
 }
 
-// `serve` (read-replica) mode's own readiness: no seed/catchup/running
-// lifecycle at all (no sync loop) -- just "can I read the DB right now."
-enum Readiness {
-  READINESS_UNSPECIFIED = 0;
-  READINESS_READY = 1;
-  READINESS_UNAVAILABLE = 2;
-}
-
 message RunHealth {
   Stage stage = 1;
   uint64 tip_slot = 2;
@@ -35,20 +27,9 @@ message RunHealth {
   uint64 peer_tip_block_no = 5;
 }
 
-message ReplicaHealth {
-  Readiness readiness = 1;
-  optional uint64 tip_slot = 2;
-  uint64 utxo_count = 3;
-  uint32 upstream_mode = 4;
-}
-
-// `run` and `serve` modes report different shapes -- see
-// `ReplicaHealth`'s comment -- not the same message with unreachable
-// fields left unset.
 message HealthResponse {
   oneof mode {
     RunHealth run = 1;
-    ReplicaHealth replica = 2;
   }
 }
 

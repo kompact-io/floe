@@ -33,7 +33,7 @@ message TxInput {
   bytes tx_hash = 1; // Hash of the previous transaction.
   uint32 output_index = 2; // Index of the output in the previous transaction.
   TxOutput as_output = 3; // Content of the input represented as output of the related transaction
-  optional Redeemer redeemer = 4; // Redeemer for the Plutus script.
+  optional Redeemer redeemer = 4; // Redeemer for the Plutus script. floe: never populated -- no redeemer data tracked.
 }
 
 // Represents a transaction output in the Cardano blockchain.
@@ -43,12 +43,12 @@ message TxOutput {
   repeated Multiasset assets = 3; // Additional native (non-ADA) assets in the output.
   optional Datum datum = 4; // Plutus data associated with the output.
   optional Script script = 5; // Script associated with the output.
-  optional bytes original_cbor = 6; // Original cbor-encoded output as seen on-chain.
+  optional bytes original_cbor = 6; // Original cbor-encoded output as seen on-chain. floe: never populated -- not retained.
 }
 
 message Datum {
   bytes hash = 1; // Hash of this datum as seen on-chain
-  optional PlutusData payload = 2; // Parsed Plutus data payload
+  optional PlutusData payload = 2; // Parsed Plutus data payload. floe: never populated -- no PlutusData parser.
   optional bytes original_cbor = 3; // Original cbor-encoded data as seen on-chain
 }
 
@@ -591,7 +591,7 @@ message StakePoolDistribution {
 
 // Pattern of an address that can be used to evaluate matching predicates.
 message AddressPattern {
-  optional bytes exact_address = 1; // The address should match this exact address value.
+  optional bytes exact_address = 1; // The address should match this exact address value. floe: UNIMPLEMENTED -- utxo stores no raw address bytes.
   optional bytes payment_part = 2; // The payment part of the address should match this value.
   optional bytes delegation_part = 3; // The delegation part of the address should match this value.
 }
@@ -637,10 +637,10 @@ message PoolRetirementPattern {
 // Pattern of a tx output that can be used to evaluate matching predicates.
 message TxOutputPattern {
   optional AddressPattern address = 1; // Match any address in the output that exhibits this pattern.
-  optional AssetPattern asset = 2; // Match any asset in the output that exhibits this pattern.
+  optional AssetPattern asset = 2; // Match any asset in the output that exhibits this pattern. floe: UNIMPLEMENTED -- assets are out of scope for `SearchUtxos`.
 }
 
-// Pattern of a Tx that can be used to evaluate matching predicates.
+// Pattern of a Tx that can be used to evaluate matching predicates. floe: unused -- no RPC searches by `TxPattern` (`SearchUtxos` matches `TxOutputPattern` directly; floe has no tx-level search).
 message TxPattern {
   TxOutputPattern consumes = 1; // Match any input that exhibits this pattern.
   TxOutputPattern produces = 2; // Match any output that exhibits this pattern.

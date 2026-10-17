@@ -1,5 +1,5 @@
 //! seed_run: seed a real SQLite DB from an amaru bootstrap snapshot archive
-//! via `floe::seed::run`, then (optionally) hand off to `sync::run` against
+//! via `floe::ingest::seed::run`, then (optionally) hand off to `sync::run` against
 //! a live peer to prove the post-seed continuity actually works.
 //!
 //! usage:
@@ -12,8 +12,8 @@
 use std::fs::File;
 
 use anyhow::{Result, anyhow, bail};
-use floe::catchup::Engine;
-use floe::{seed, store, sync};
+use floe::ingest::catchup::Engine;
+use floe::ingest::{seed, store, sync};
 use pallas_network::miniprotocols::Point;
 use rusqlite::Connection;
 

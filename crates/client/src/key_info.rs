@@ -15,14 +15,14 @@ pub struct KeyInfo {
 
 pub fn key_info(skey: [u8; 32], network: pallas_addresses::Network) -> anyhow::Result<KeyInfo> {
     let vk = SecretKey::from(skey).public_key();
-    let pay_cred = Hasher::<224>::hash(vk.as_ref());
+    let pay_hash = Hasher::<224>::hash(vk.as_ref());
     let address = Address::Shelley(ShelleyAddress::new(
         network,
-        ShelleyPaymentPart::key_hash(pay_cred),
+        ShelleyPaymentPart::key_hash(pay_hash),
         ShelleyDelegationPart::Null,
     ));
     Ok(KeyInfo {
         address: address.to_bech32()?,
-        vkh: hex::encode(pay_cred),
+        vkh: hex::encode(pay_hash),
     })
 }

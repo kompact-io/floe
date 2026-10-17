@@ -1,23 +1,28 @@
-//! health: core, scheme-independent readiness state. `run` mode's
-//! `Health` tracks the writer process's own seed/catchup/running
-//! lifecycle plus chain-freshness in-memory; `serve` (read-replica)
-//! mode has no lifecycle of its own and is snapshotted fresh from the
-//! DB on every call instead (see `replica_snapshot`). Zero knowledge of
-//! HTTP, gRPC, or wire format -- `scheme::grpc::health`/
-//! `scheme::http::metrics` only snapshot and render this.
+//! health: core, scheme-independent readiness state -- the writer
+//! process's seed/catchup/running lifecycle plus chain-freshness,
+//! in-memory. Zero knowledge of HTTP, gRPC, or wire format --
+//! `scheme::grpc::health`/`scheme::http::metrics` only snapshot and
+//! render this.
+//!
+//! `Stage` mirrors `store::Mode` (plus `Seeding`, which precedes `Mode`
+//! meaning anything) -- it's the storage engine's own lifecycle, not a
+//! query-readiness signal: `Mode::Running` switches at `depth <=
+//! k+margin`, a reorg-safety threshold reached long before the live
+//! tip. `is_ready` is the separate, stricter signal query handlers
+//! actually gate on (`Ctx::require_ready`): `Stage::Running` *and*
+//! within `fresh`'s hysteresis of tip. Callers that get `NotReady` can
+//! still read `block_no`/`peer_tip_block_no` off `/health` to see how
+//! far behind that is.
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
-use floe_dto_http::{HealthDto, ReplicaHealthDto};
-pub use floe_dto_http::{Readiness, Stage};
+use floe_dto_http::health::RunHealth;
+pub use floe_dto_http::health::Stage;
 
-use crate::decode::TxHash;
-use crate::store::Mode;
+use crate::ingest::decode::TxHash;
+use crate::ingest::store::Mode;
 
-/// `Stage` has no `Mode` dependency (it's defined in `floe-dto-http`,
-/// which can't depend on this crate's domain types), so the conversion
-/// lives here instead, where both types are in scope.
 impl From<Mode> for Stage {
     fn from(mode: Mode) -> Self {
         match mode {
@@ -27,10 +32,18 @@ impl From<Mode> for Stage {
     }
 }
 
+/// Hysteresis for `fresh`: enter at `FRESH_ENTER_DEPTH`, only fall
+/// back out past `FRESH_EXIT_DEPTH`. Depth-based, not time-based --
+/// Cardano can go several minutes between blocks with nothing wrong,
+/// and that alone must never look like falling behind.
+const FRESH_ENTER_DEPTH: u64 = 2;
+const FRESH_EXIT_DEPTH: u64 = 10;
+
 #[derive(Debug, Default)]
 pub struct Health {
     magic: AtomicU64,
     stage: AtomicU8,
+    fresh: AtomicBool,
     tip_slot: AtomicU64,
     block_no: AtomicU64,
     peer_tip_block_no: AtomicU64,
@@ -53,14 +66,22 @@ impl Health {
 
     pub fn record_apply(
         &self,
-        stage: Stage,
+        mode: Mode,
         slot: u64,
         block_no: u64,
         hash: TxHash,
         peer_tip_block_no: u64,
         utxos_created: u64,
     ) {
-        self.set_stage(stage);
+        self.set_stage(mode.into());
+        let threshold = if self.fresh.load(Ordering::Relaxed) {
+            FRESH_EXIT_DEPTH
+        } else {
+            FRESH_ENTER_DEPTH
+        };
+        let depth = peer_tip_block_no.saturating_sub(block_no);
+        self.fresh
+            .store(mode == Mode::Running && depth <= threshold, Ordering::Relaxed);
         self.tip_slot.store(slot, Ordering::Relaxed);
         self.block_no.store(block_no, Ordering::Relaxed);
         self.peer_tip_block_no
@@ -83,8 +104,10 @@ impl Health {
         }
     }
 
+    /// `Stage::Running` and within `fresh`'s hysteresis of the peer tip
+    /// -- what query handlers gate on, stricter than `stage().is_ready()`.
     pub fn is_ready(&self) -> bool {
-        self.stage().is_ready()
+        self.stage().is_ready() && self.fresh.load(Ordering::Relaxed)
     }
 
     pub fn applied_total(&self) -> u64 {
@@ -99,32 +122,14 @@ impl Health {
         self.utxos_created.load(Ordering::Relaxed)
     }
 
-    /// `run` mode's `/health`/`GetHealth` payload.
-    pub fn snapshot(&self) -> HealthDto {
-        HealthDto {
+    /// `/health`/`GetHealth` payload.
+    pub fn snapshot(&self) -> RunHealth {
+        RunHealth {
             stage: self.stage(),
             tip_slot: self.tip_slot.load(Ordering::Relaxed),
             block_no: self.block_no.load(Ordering::Relaxed),
             tip_hash: *self.tip_hash.lock().unwrap(),
             peer_tip_block_no: self.peer_tip_block_no.load(Ordering::Relaxed),
         }
-    }
-}
-
-/// `serve` (read-replica) mode's `/health`/`GetHealth` payload: no
-/// in-memory lifecycle of its own (see module doc) -- `readiness` is
-/// whatever the caller already determined by attempting a DB read
-/// (`Readiness::Unavailable` if that read failed), not computed here.
-pub fn replica_snapshot(
-    readiness: Readiness,
-    tip_slot: Option<u64>,
-    utxo_count: u64,
-    upstream_mode: Mode,
-) -> ReplicaHealthDto {
-    ReplicaHealthDto {
-        readiness,
-        tip_slot,
-        utxo_count,
-        upstream_mode: upstream_mode as u8,
     }
 }

@@ -1,7 +1,7 @@
 //! floe-dto-grpc: generated protobuf/gRPC types for floe's own
 //! `QueryService` fork (+ its `cardano` dependency), compiled by
 //! `build.rs` from `proto/floe/v1/`. Nothing hand-written here --
-//! that's `floe-dto-http`'s job for the REST/CBOR wire shapes. Module
+//! that's `floe-dto-http`'s job for the JSON/CBOR wire shapes. Module
 //! nesting (`floe::v1::{cardano,query}`) mirrors the proto package
 //! path exactly: `prost`/`tonic-build` emit cross-package references
 //! (e.g. `query`'s use of `cardano::Block`) as `super::`-relative

@@ -22,13 +22,25 @@ Floe does:
 
 Floe does not:
 
+- support byron or pointer addresses (and associated utxos)
 - support chain history with depth
+- we dont handle `is_valid = false` properly
 - query by assets
 - anything about staking, governance, _etc_
 
 Floe does not (yet):
 
 - support protocol params
+
+## TODO
+
+### Protocol params
+
+Not present in amaru's bootstrap snapshot (`state` is unused even by amaru's
+own bootstrap). amaru instead hardcodes a per-network baseline `PParams` at a
+known epoch and updates it by replaying enacted `ParameterChangeAction`s.
+Replicating this reliably means also tracking governance quorum/threshold
+(ratification) state, not just the param values themselves.
 
 ## Code
 

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Floe Query Demo</title>
+  <link rel="stylesheet" href="/shared.css" />
+</head>
+<body>
+
+  <div class="header">
+    <div class="title-group">
+      <h2>FLOE QUERY DEMO</h2>
+    </div>
+    <div class="nav-links">
+      <div class="badge" id="wasm-badge">LOADING WASM&hellip;</div>
+      <a href="/">&larr; DASHBOARD</a>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">QUERY</div>
+
+      <div class="field">
+        <label for="rpc">RPC</label>
+        <select id="rpc">
+          <option value="readUtxos">ReadUtxos</option>
+          <option value="searchUtxos">SearchUtxos</option>
+          <option value="readTx">ReadTx</option>
+          <option value="readData">ReadData</option>
+        </select>
+      </div>
+
+      <!-- ReadUtxos -->
+      <div class="field rpc-fields" data-rpc="readUtxos">
+        <label for="read-utxos-keys">Keys (comma-separated "txhash:index")</label>
+        <input id="read-utxos-keys" type="text" placeholder="deadbeef...:0" />
+      </div>
+
+      <!-- SearchUtxos -->
+      <div class="field rpc-fields" data-rpc="searchUtxos">
+        <label for="search-pay-hash">Pay hash (hex, optional)</label>
+        <input id="search-pay-hash" type="text" placeholder="28-byte hex" />
+      </div>
+      <div class="field rpc-fields" data-rpc="searchUtxos">
+        <label for="search-stake-hash">Stake hash (hex, optional)</label>
+        <input id="search-stake-hash" type="text" placeholder="28-byte hex" />
+      </div>
+      <div class="field rpc-fields" data-rpc="searchUtxos">
+        <label for="search-max-items">Max items (optional)</label>
+        <input id="search-max-items" type="number" placeholder="50" />
+      </div>
+
+      <!-- ReadTx -->
+      <div class="field rpc-fields" data-rpc="readTx">
+        <label for="read-tx-hash">Tx hash (hex)</label>
+        <input id="read-tx-hash" type="text" placeholder="32-byte hex" />
+      </div>
+
+      <!-- ReadData -->
+      <div class="field rpc-fields" data-rpc="readData">
+        <label for="read-data-key">Datum key (hex)</label>
+        <input id="read-data-key" type="text" placeholder="32-byte hex" />
+      </div>
+
+      <button class="run-button" id="run" disabled>RUN &rarr;</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">RESULT</div>
+      <pre class="result" id="result">&mdash;</pre>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 {
-  description = "floe: minimal Cardano UTxO index";
+  description = "The last chunk of the Cardano chain";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -116,11 +116,50 @@
           };
 
         cross = nixpkgs.lib.mapAttrs (target: _: mkCrossCrateSet target) crossPkgsByTarget;
+
+        # wasm32-unknown-unknown: no C toolchain needed (no native deps),
+        # just fenix's std for the target.
+        wasmCraneLib = (crane.mkLib pkgs).overrideToolchain (fenix.packages.${system}.combine [
+          fenix.packages.${system}.stable.toolchain
+          fenix.packages.${system}.targets.wasm32-unknown-unknown.stable.rust-std
+        ]);
+        wasmCommonArgs = native.commonArgs // {
+          pname = "floe-client-wasm";
+          version = "0.1.0";
+          CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
+          cargoExtraArgs = "--locked -p floe-client --lib --no-default-features --features wasm";
+          # Default checkPhase runs the test binary on the build host --
+          # impossible for a wasm32 artifact (no runtime here).
+          doCheck = false;
+        };
+        wasmCargoArtifacts = wasmCraneLib.buildDepsOnly wasmCommonArgs;
+        # Default install phase picks up the cdylib fine, at
+        # `$out/lib/floe_client.wasm`.
+        floe-client-wasm-raw = wasmCraneLib.buildPackage (wasmCommonArgs // {
+          cargoArtifacts = wasmCargoArtifacts;
+        });
+        # Must match `wasm-bindgen`'s version exactly (see Cargo.toml).
+        floe-client-wasm = pkgs.runCommand "floe-client-wasm" { nativeBuildInputs = [ pkgs.wasm-bindgen-cli ]; } ''
+          wasm-bindgen --target web --out-dir "$out" "${floe-client-wasm-raw}/lib/floe_client.wasm"
+        '';
+
+        floe-web-dashboard = pkgs.runCommand "floe-web-dashboard" { } ''
+          mkdir -p "$out"
+          cp ${./web/shared.css} "$out/shared.css"
+          cp -r ${./web/dashboard}/. "$out/"
+        '';
+        floe-web-demo = pkgs.runCommand "floe-web-demo" { } ''
+          mkdir -p "$out/pkg"
+          cp ${./web/shared.css} "$out/shared.css"
+          cp -r ${./web/demo}/. "$out/"
+          cp -r ${floe-client-wasm}/. "$out/pkg/"
+        '';
       in
       {
         packages = {
           default = native.floe;
           inherit (native) chainsync-probe seed-probe floe floe-client floe-smoke;
+          inherit floe-client-wasm floe-web-dashboard floe-web-demo;
         } // nixpkgs.lib.mapAttrs' (target: pkgs':
           nixpkgs.lib.nameValuePair "floe-${target}" pkgs'.floe
         ) cross;
@@ -154,6 +193,7 @@
     # argv via lib.mkArgs directly, against its own process schema.
     // {
       lib.mkArgs = (import ./nix/lib.nix { inherit (nixpkgs) lib; }).mkArgs;
+      lib.mkSmokeArgs = (import ./nix/lib.nix { inherit (nixpkgs) lib; }).mkSmokeArgs;
       nixosModules.default = import ./nix/modules/floe.nix;
       nixosModules.floe = self.nixosModules.default;
     };

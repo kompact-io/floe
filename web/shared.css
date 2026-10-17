@@ -1,0 +1,227 @@
+/* shared.css: the neo-brutalist terminal styling both web/dashboard and
+   web/demo use -- one copy so the two pages stay visually consistent. */
+
+:root {
+  --bg: #09090b;
+  --card-bg: #0c0a09;
+  --border: #ffffff;
+  --border-dim: #52525b;
+  --text: #ffffff;
+  --accent-green: #22c55e;
+  --accent-purple: #c084fc;
+  --accent-cyan: #22d3ee;
+  --accent-yellow: #facc15;
+  --accent-red: #f87171;
+
+  /* Neo-brutalist shadow: solid, offset, black/chunky */
+  --shadow: 4px 4px 0px 0px #000000;
+  --shadow-border: 4px 4px 0px 0px #ffffff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: 'JetBrains Mono', 'Courier New', Courier, monospace;
+  background: var(--bg);
+  color: var(--text);
+  margin: 0;
+  padding: 1.5rem;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  max-width: 1200px;
+  margin: 0 auto 2rem auto;
+  gap: 1rem;
+}
+
+.title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.title-group h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.nav-links {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.nav-links a {
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 2px dashed var(--border-dim);
+}
+.nav-links a:hover {
+  border-bottom-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+/* Terminal blink effect */
+.status-dot {
+  width: 12px;
+  height: 12px;
+  background: var(--accent-green);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--accent-green);
+  display: inline-block;
+}
+.status-dot.down {
+  background: var(--accent-red);
+  box-shadow: 0 0 8px var(--accent-red);
+}
+
+/* Chunky Neo-brutalist Badges & Cards */
+.badge {
+  font-weight: 700;
+  padding: 0.5rem 1rem;
+  border: 3px solid var(--border);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-border);
+  text-transform: uppercase;
+  font-size: 0.85rem;
+}
+
+.badge-yellow {
+  border-color: var(--accent-yellow);
+  color: var(--accent-yellow);
+  box-shadow: 4px 4px 0px 0px var(--accent-yellow);
+}
+
+.badge-red {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+  box-shadow: 4px 4px 0px 0px var(--accent-red);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.75rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+@media (min-width: 768px) {
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.card {
+  background: var(--card-bg);
+  border: 3px solid var(--border);
+  box-shadow: var(--shadow-border);
+  padding: 1.25rem;
+  overflow: hidden;
+  position: relative;
+}
+
+.card-title {
+  font-size: 0.875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text);
+  margin-bottom: 1.25rem;
+  border-bottom: 2px dashed var(--border-dim);
+  padding-bottom: 0.5rem;
+  letter-spacing: 0.05em;
+}
+
+.chart-box {
+  width: 100%;
+  height: 240px;
+}
+
+/* Style override for uPlot UI to make it terminal-like */
+.uplot {
+  font-family: inherit !important;
+}
+.uplot .u-legend {
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: bold;
+}
+.uplot .u-legend th {
+  padding-right: 8px;
+}
+.uplot .u-cursor-x, .uplot .u-cursor-y {
+  border-color: var(--border-dim) !important;
+}
+
+/* demo-only form/console elements */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+
+.field label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--border-dim);
+  letter-spacing: 0.05em;
+}
+
+.field input, .field select {
+  font-family: inherit;
+  font-size: 0.9rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 2px solid var(--border-dim);
+  padding: 0.5rem;
+}
+.field input:focus, .field select:focus {
+  outline: none;
+  border-color: var(--accent-cyan);
+}
+
+button.run-button {
+  font-family: inherit;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.6rem 1.25rem;
+  background: var(--accent-green);
+  color: #09090b;
+  border: 3px solid var(--border);
+  box-shadow: var(--shadow-border);
+  cursor: pointer;
+}
+button.run-button:hover {
+  filter: brightness(1.1);
+}
+button.run-button:active {
+  box-shadow: none;
+  transform: translate(4px, 4px);
+}
+
+pre.result {
+  background: var(--bg);
+  border: 2px dashed var(--border-dim);
+  padding: 1rem;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  min-height: 2.5rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+pre.result.error {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}

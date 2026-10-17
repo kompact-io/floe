@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Floe Node Dashboard</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/uplot@1.6.24/dist/uPlot.min.css" />
+  <script src="https://unpkg.com/uplot@1.6.24/dist/uPlot.iife.min.js"></script>
+  <link rel="stylesheet" href="/shared.css" />
+</head>
+<body>
+
+  <div class="header">
+    <div class="title-group">
+      <h2>FLOE NODE STATUS</h2>
+      <span class="status-dot down" id="status-dot"></span>
+    </div>
+    <div class="nav-links">
+      <div class="badge badge-red" id="status-badge" style="display: none;">METRICS UNREACHABLE</div>
+      <a href="/demo/">QUERY DEMO &rarr;</a>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">BLOCKS APPLIED (PER MIN)</div>
+      <div id="chart-applied" class="chart-box"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">UTXO INDEX COUNT</div>
+      <div id="chart-utxos" class="chart-box"></div>
+    </div>
+
+    <div class="card" style="grid-column: 1 / -1;">
+      <div class="card-title">API REQUEST THROUGHPUT BY SCHEME (REQ/S)</div>
+      <div id="chart-requests" class="chart-box"></div>
+    </div>
+  </div>
+
+  <script>
+    // Proxied same-origin to VictoriaMetrics (`/api/v1/query_range`) --
+    // this page never talks to VictoriaMetrics' own host directly, see
+    // the Caddy guidance alongside this repo's deployment docs.
+    const API_ENDPOINT = '/api/v1/query_range';
+    const REFRESH_MS = 10000;
+    const plots = new Map();
+
+    const CHARTS = [
+      {
+        id: 'chart-applied',
+        query: 'increase(floe_applied_total[1m])',
+        label: 'Applied/min',
+        color: '#22d3ee', // Cyan
+        fill: 'transparent'
+      },
+      {
+        id: 'chart-utxos',
+        query: 'floe_utxo_count',
+        label: 'UTxOs',
+        color: '#c084fc', // Purple
+        fill: 'transparent'
+      },
+      {
+        id: 'chart-requests',
+        query: 'sum(rate(floe_requests_total[1m])) by (scheme)',
+        label: 'Requests',
+        color: '#22c55e', // Green
+        fill: 'transparent'
+      }
+    ];
+
+    function createPlotOptions(containerEl, label, color, fill) {
+      return {
+        width: containerEl.clientWidth,
+        height: containerEl.clientHeight,
+        series: [
+          { label: "TIME", value: (self, v) => v ? new Date(v * 1000).toLocaleTimeString() : "--" },
+          { label: label.toUpperCase(), stroke: color, fill: fill, width: 2 }
+        ],
+        axes: [
+          {
+            stroke: "#ffffff",
+            grid: { stroke: "#27272a", width: 1 },
+            font: "10px 'JetBrains Mono', monospace"
+          },
+          {
+            stroke: "#ffffff",
+            grid: { stroke: "#27272a", width: 1 },
+            font: "10px 'JetBrains Mono', monospace"
+          }
+        ]
+      };
+    }
+
+    async function fetchQueryData(query) {
+      const now = Math.floor(Date.now() / 1000);
+      const start = now - 3600;
+      const url = `${API_ENDPOINT}?query=${encodeURIComponent(query)}&start=${start}&end=${now}&step=15s`;
+
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const json = await res.json();
+
+      if (!json.data || !json.data.result.length) return [[], []];
+
+      const timestamps = [];
+      const values = [];
+      json.data.result[0].values.forEach(v => {
+        timestamps.push(v[0]);
+        values.push(parseFloat(v[1]));
+      });
+
+      return [timestamps, values];
+    }
+
+    function setConnected(ok) {
+      document.getElementById('status-dot').classList.toggle('down', !ok);
+      document.getElementById('status-badge').style.display = ok ? 'none' : '';
+    }
+
+    async function refreshDashboard() {
+      let ok = true;
+      for (const config of CHARTS) {
+        const container = document.getElementById(config.id);
+        let data;
+        try {
+          data = await fetchQueryData(config.query);
+        } catch (e) {
+          console.error('Fetch failed', e);
+          ok = false;
+          data = [[], []];
+        }
+
+        if (!plots.has(config.id)) {
+          const opts = createPlotOptions(container, config.label, config.color, config.fill);
+          const instance = new uPlot(opts, data, container);
+          plots.set(config.id, instance);
+
+          const resizeObserver = new ResizeObserver(entries => {
+            for (let entry of entries) {
+              instance.setSize({
+                width: entry.contentRect.width,
+                height: entry.contentRect.height
+              });
+            }
+          });
+          resizeObserver.observe(container);
+        } else {
+          plots.get(config.id).setData(data);
+        }
+      }
+      setConnected(ok);
+    }
+
+    refreshDashboard();
+    setInterval(refreshDashboard, REFRESH_MS);
+  </script>
+</body>
+</html>

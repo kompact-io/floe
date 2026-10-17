@@ -18,8 +18,8 @@ use std::io::Read;
 use std::rc::Rc;
 
 use anyhow::{Result, anyhow, bail};
-use floe::mempack::{Datum, ScriptRef, TxOut, decode_tx_out};
-use floe::tvar::{self, KEY_LEN};
+use floe::ingest::mempack::{Datum, ScriptRef, TxOut, decode_tx_out};
+use floe::ingest::tvar::{self, KEY_LEN};
 use pallas_crypto::hash::Hasher;
 use pallas_network::facades::PeerClient;
 use pallas_network::miniprotocols::{Point, chainsync::NextResponse};
@@ -188,8 +188,8 @@ fn main() -> Result<()> {
                             if key_payment {
                                 let g = usize::from(o.tag == 2 || o.tag == 3);
                                 wit[g].0 += 1;
-                                let cred: [u8; 28] = o.address[1..29].try_into().unwrap();
-                                if hashes.contains(&cred) {
+                                let hash: [u8; 28] = o.address[1..29].try_into().unwrap();
+                                if hashes.contains(&hash) {
                                     wit[g].1 += 1;
                                 } else if wit_bad.len() < 5 {
                                     wit_bad.push(describe(txid, ix, &o));

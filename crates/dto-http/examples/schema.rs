@@ -1,19 +1,22 @@
-//! Dumps machine-readable JSON Schema for every public REST/JSON DTO
-//! in this crate, keyed by type name. Published to the docs site as
-//! `schema.json` by the Docs CI workflow -- generated straight from
-//! these structs/enums via `schemars`, not a hand-maintained spec, so
-//! it fails to compile (and CI fails loudly) the moment a DTO drifts
-//! from what `#[derive(JsonSchema)]` can see.
+//! Dumps machine-readable JSON Schema for every public JSON type in
+//! this crate, keyed by type name. Published to the docs site as
+//! `schema.json` by the Docs CI workflow, generated straight from
+//! these structs/enums via `schemars` -- a type drifting from what
+//! `#[derive(JsonSchema)]` can see fails this example's own compile,
+//! and CI with it.
 //!
-//! Requires both `schema` (the derive) and `metrics` (`HealthDto` and
-//! friends, otherwise not part of this crate's public API) features.
+//! Requires both `schema` (the derive) and `metrics` (gates
+//! `health::RunHealth` and friends) features.
 
-use floe_dto_http::{
-    AddressDto, AssetDto, ChainPointDto, ChangesDto, ChangesResponseDto, DatumDto,
-    DatumResponseDto, ErrorBody, HealthDto, HealthResponseDto, MetricsDto, MultiassetDto, PageDto,
-    ReplicaHealthDto, RequestCount, ScriptDto, ScriptLang, StaleDto, StaleReasonDto,
-    SubmitTxResponseDto, TxDto, TxResponseDto, UtxoDto,
+use floe_dto_http::ErrorBody;
+use floe_dto_http::cardano::{Asset, Datum, Multiasset, Script, ScriptLang, TxInput, TxOutput};
+use floe_dto_http::health::{HealthResponse, MetricsResponse, RequestCount, RunHealth};
+use floe_dto_http::query::{
+    Address, AnyChainDatum, ChainPoint, ReadDataRequest, ReadDataResponse, ReadTxRequest,
+    ReadTxResponse, ReadUtxosRequest, ReadUtxosResponse, SearchUtxosRequest, SearchUtxosResponse,
+    Tx, TxoRef, Utxo,
 };
+use floe_dto_http::submit::SubmitTxResponse;
 use schemars::schema_for;
 
 macro_rules! entry {
@@ -28,29 +31,33 @@ macro_rules! entry {
 fn main() {
     let mut types = serde_json::Map::new();
 
-    entry!(types, ChainPointDto);
-    entry!(types, AssetDto);
-    entry!(types, MultiassetDto);
+    entry!(types, ChainPoint);
+    entry!(types, TxoRef);
+    entry!(types, Asset);
+    entry!(types, Multiasset);
     entry!(types, ScriptLang);
-    entry!(types, ScriptDto);
-    entry!(types, AddressDto);
-    entry!(types, DatumDto);
-    entry!(types, UtxoDto);
-    entry!(types, PageDto);
-    entry!(types, TxDto);
-    entry!(types, TxResponseDto);
-    entry!(types, DatumResponseDto);
-    entry!(types, StaleReasonDto);
-    entry!(types, StaleDto);
-    entry!(types, ChangesDto);
-    entry!(types, ChangesResponseDto);
-    entry!(types, SubmitTxResponseDto);
+    entry!(types, Script);
+    entry!(types, Address);
+    entry!(types, Datum);
+    entry!(types, TxOutput);
+    entry!(types, TxInput);
+    entry!(types, Utxo);
+    entry!(types, ReadUtxosRequest);
+    entry!(types, ReadUtxosResponse);
+    entry!(types, SearchUtxosRequest);
+    entry!(types, SearchUtxosResponse);
+    entry!(types, Tx);
+    entry!(types, ReadTxRequest);
+    entry!(types, ReadTxResponse);
+    entry!(types, AnyChainDatum);
+    entry!(types, ReadDataRequest);
+    entry!(types, ReadDataResponse);
+    entry!(types, SubmitTxResponse);
     entry!(types, ErrorBody);
-    entry!(types, HealthDto);
-    entry!(types, ReplicaHealthDto);
-    entry!(types, HealthResponseDto);
+    entry!(types, RunHealth);
+    entry!(types, HealthResponse);
     entry!(types, RequestCount);
-    entry!(types, MetricsDto);
+    entry!(types, MetricsResponse);
 
     println!(
         "{}",

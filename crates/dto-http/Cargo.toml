@@ -9,7 +9,7 @@ description.workspace = true
 # `pallas-addresses` stay unconditional -- hex
 # formatting backs JSON's byte encoding and error messages regardless,
 # and address bech32 rendering is needed by both wire formats (see
-# `AddressDto`). See ../../plan-dto-http.md.
+# `query::Address`).
 [features]
 json = ["dep:serde"]
 cbor = ["dep:minicbor"]

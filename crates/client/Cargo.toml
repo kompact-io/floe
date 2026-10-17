@@ -6,49 +6,82 @@ description.workspace = true
 
 # Keeps the library import path (`use floe_client::...`) and the bin
 # name (`floe-client`, matching every existing invocation) distinct --
-# same `[lib]` + `[[bin]]` split as `floe-server`, see
-# `../../plan-floe-client-as-lib.md`.
+# same `[lib]` + `[[bin]]` split as `floe-server`.
 [lib]
 name = "floe_client"
 path = "src/lib.rs"
+# `cdylib` for `wasm-bindgen`'s wasm32 build; harmless extra on native.
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "floe-client"
 path = "src/main.rs"
-required-features = ["clap", "serde_json"]
+required-features = ["clap", "tracing", "serde_json"]
 
 # Deployment smoke test against a running `floe-server`, see
-# `src/bin/smoke.rs`.
+# `src/bin/smoke/main.rs`.
 [[bin]]
 name = "floe-smoke"
-path = "src/bin/smoke.rs"
-required-features = ["clap", "serde_json"]
+path = "src/bin/smoke/main.rs"
+required-features = ["clap", "tracing", "serde_json"]
 
 [features]
-default = ["grpc", "http-json", "http-cbor", "clap", "serde_json"]
-grpc = ["dep:floe-dto-grpc", "dep:tonic", "floe-dto-http/json"]
-http-json = ["floe-dto-http/json"]
-# Pulls in `floe-dto-http/json` too, not just `/cbor`: the bin always
-# prints JSON regardless of which wire format was used on the wire
-# (see `main.rs`), so `Output`'s payloads need `Serialize` even in a
-# `--features http-cbor` (no `json`) build. Cheap -- `json` is just
-# `serde`, no heavy new deps.
-http-cbor = ["floe-dto-http/cbor", "floe-dto-http/json"]
+# `clap`/`tracing` are bin-only (parsed args, logging) -- `lib.rs` never
+# touches either, so a lib consumer doing `default-features = false,
+# features = ["grpc"]` (etc.) pulls neither in. Both get an implicit
+# feature of their own name from being optional deps, same as `serde_json`.
+default = ["grpc", "http-json", "http-cbor", "clap", "tracing", "serde_json"]
+grpc = ["dep:floe-dto-grpc", "dep:tonic"]
+# `serde_json` is a genuine lib dependency under this feature --
+# `http_json.rs` itself encodes/decodes with it, not just the bins'
+# output printing.
+http-json = ["serde_json"]
+http-cbor = []
+# Bundles both logging deps under one name (each optional dep's own
+# implicit feature only covers itself) -- bin-only, see `lib.rs`.
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
+# wasm32-only: `wasm.rs`/`wasm/*.rs`'s fetch-backed `Backend` +
+# `#[wasm_bindgen]` wrapper. Pulls `serde_json` directly, not `http-json`
+# -- `http_json`/`http_common` hand-roll HTTP over `tokio::net::TcpStream`
+# (via `tokio`'s `net` -> `mio`), which doesn't build for wasm32. The four
+# `dep:` deps are themselves wasm32-gated below, so enabling this on a
+# native build is a no-op.
+wasm = ["serde_json", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sys"]
 
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true, optional = true }
 floe-dto-grpc = { workspace = true, optional = true }
-floe-dto-http = { workspace = true }
+# `json`/`cbor`/`metrics` unconditionally, mirroring `floe-server`'s own
+# dependency line -- codec features, not a bin-vs-lib concern (cheap,
+# per `floe-dto-http`'s own doc comment).
+floe-dto-http = { workspace = true, features = ["json", "cbor", "metrics"] }
 hex = { workspace = true }
 minicbor = { workspace = true }
 pallas-addresses = { workspace = true }
 pallas-crypto = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, optional = true }
-tokio = { workspace = true }
 tonic = { workspace = true, optional = true }
-# Only `floe-smoke` uses these (its `required-features` already pulls
-# in `clap`/`serde_json`); the library itself never logs.
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+# Bin-only (CLI arg parsing/logging); `lib.rs` never touches either --
+# see `[features]`'s own doc comment.
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+# wasm32-only: cfg'd out of existence on native, not just unused.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+web-sys = { workspace = true, optional = true, features = [
+  "Headers",
+  "Request",
+  "RequestInit",
+  "Response",
+  "Window",
+] }
+
+# Non-wasm only: `tokio`'s `net` -> `mio` doesn't build for wasm32, so
+# this can't be feature-gated away, only target-gated.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }

@@ -1,18 +1,6 @@
-//! floe: minimal Cardano UTxO index. CLI entry point.
+//! Floe
 //!
-//! `run` seeds (if given a snapshot archive and not already seeded) and
-//! syncs continuously against a peer, optionally serving the gRPC
-//! `QueryService` (`grpc`). `tip` prints the current checkpoint and mode,
-//! then exits. `serve` is `run` without the writer half: no peer, no seed,
-//! no sync loop -- just the gRPC query interface against an existing DB
-//! (e.g. a read-only replica kept current by something else, like
-//! Litestream, outside this process entirely).
-//!
-//! `--metrics` optionally serves `/health` and `/metrics` (see
-//! `floe::metrics`) alongside the gRPC port. The old REST query API
-//! (`http.rs`) is still gone (dropped going gRPC-first, see
-//! `plan-rpc.md`), but its `/health`/`/metrics` routes were always a
-//! separate concern and are back.
+//! The last chunk of the Cardano chain
 
 use std::fs::File;
 use std::sync::Arc;
@@ -20,8 +8,9 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 use floe::health::Health;
-use floe::scheme::grpc;
-use floe::{seed, store, sync};
+use floe::ingest::{seed, store, sync};
+#[cfg(feature = "grpc")]
+use floe::serve::scheme::grpc;
 use pallas_network::miniprotocols::Point;
 use rusqlite::Connection;
 use tracing::{error, info, instrument};
@@ -46,10 +35,6 @@ struct Cli {
 enum Command {
     /// Seed (if given) and sync continuously against a peer.
     Run(RunArgs),
-    /// Serve the gRPC QueryService against an existing DB, with no peer
-    /// connection and no sync loop -- for a read replica kept current by
-    /// something else outside this process.
-    Serve(ServeArgs),
     /// Print the current checkpoint and mode, then exit.
     Tip(TipArgs),
 }
@@ -59,9 +44,13 @@ struct RunArgs {
     /// Path to the SQLite index file (created if it doesn't exist).
     #[arg(long)]
     db: String,
-    /// Peer address, host:port.
+    /// Peer address, host:port. Omit to skip the peer connection and
+    /// sync loop entirely -- just seed (if given) and serve whatever's
+    /// already in `--db`. For standing up query listeners against a
+    /// fixed fixture DB (e.g. integration tests) with no live peer to
+    /// sync against.
     #[arg(long)]
-    peer: String,
+    peer: Option<String>,
     /// Network magic (mainnet=764824073, preprod=1, preview=2).
     #[arg(long)]
     magic: u64,
@@ -69,7 +58,8 @@ struct RunArgs {
     /// the DB is already seeded.
     #[arg(long)]
     seed: Option<String>,
-    /// Serve the gRPC QueryService on this host:port.
+    /// Serve the gRPC QueryService/SubmitService on this host:port
+    /// (requires the `grpc` feature).
     #[arg(long)]
     grpc: Option<String>,
     /// Serve `/health` and `/metrics` (Prometheus text) on this
@@ -77,21 +67,31 @@ struct RunArgs {
     /// target.
     #[arg(long)]
     metrics: Option<String>,
-    /// Serve the REST transport (`http::serve` -- mirrors `QueryService`/
-    /// `SubmitService`, see `../../plan-dto-http.md`) on this host:port.
-    /// Independent of `--grpc`/`--metrics`: its own listener, own
-    /// routes, same underlying DB.
+    /// Serve the http query/submit API on this host:port. JSON vs CBOR
+    /// is negotiated per request from `Accept`, not fixed per listener
+    /// -- `--http-json`/`--http-cbor` just pick which formats this one
+    /// listener accepts at all (at least one required).
     #[arg(long)]
     http: Option<String>,
+    /// Accept `application/json` on `--http` (requires the `http-json`
+    /// feature; requires `--http`).
+    #[arg(long, requires = "http")]
+    http_json: bool,
+    /// Accept `application/cbor` on `--http` (requires the `http-cbor`
+    /// feature; requires `--http`).
+    #[arg(long, requires = "http")]
+    http_cbor: bool,
     /// amaru's HTTP Cardano Submit API, host:port (its own
-    /// `--submit-api-listen-on`). When given alongside `--grpc`
-    /// and/or `--http`, also mounts `SubmitTx` on each -- see
-    /// `submit.rs`'s module doc for why this isn't a `cardano-node`
-    /// Unix socket.
+    /// `--submit-api-listen-on`). `SubmitTx` is always mounted on
+    /// every scheme that's serving (`--grpc`/`--http-json`/
+    /// `--http-cbor`) -- a request fails with 503 if amaru's
+    /// submit-api itself is unreachable, not if this flag is absent
+    /// -- see `submit.rs`'s module doc for why this isn't a
+    /// `cardano-node` Unix socket.
     #[arg(long)]
-    amaru_submit_api: Option<String>,
-    /// Hard ceiling on `SearchUtxos`/`UtxoChanges` page sizes -- a
-    /// request asking for more just gets clamped, not rejected.
+    amaru_submit_api: String,
+    /// Hard ceiling on `SearchUtxos` page size -- a request asking for
+    /// more just gets clamped, not rejected.
     #[arg(long, default_value_t = 1000)]
     max_page_size: u32,
     /// Reorg depth, and how much history `prune` retains. Default is
@@ -113,53 +113,6 @@ struct RunArgs {
 }
 
 #[derive(Args)]
-struct ServeArgs {
-    /// Path to the SQLite index file, or a `file:...?vfs=<name>` URI
-    /// selecting a non-default VFS (e.g. a Litestream read replica) --
-    /// anything `rusqlite::Connection::open_with_flags` with
-    /// `SQLITE_OPEN_URI` accepts.
-    #[arg(long)]
-    db: String,
-    /// Network magic (mainnet=764824073, preprod=1, preview=2) -- needed
-    /// to render/validate bech32 addresses, same as `run`.
-    #[arg(long)]
-    magic: u64,
-    /// Serve the gRPC QueryService on this host:port.
-    #[arg(long)]
-    grpc: String,
-    /// Serve `/health` and `/metrics` (Prometheus text) on this
-    /// host:port, for an orchestrator's readiness probe and a scrape
-    /// target.
-    #[arg(long)]
-    metrics: Option<String>,
-    /// Serve the REST transport on this host:port -- see `RunArgs::http`'s
-    /// doc comment.
-    #[arg(long)]
-    http: Option<String>,
-    /// amaru's HTTP Cardano Submit API, host:port. When given, also
-    /// mounts `SubmitTx` on `--grpc` and/or `--http` -- see
-    /// `submit.rs`'s module doc.
-    #[arg(long)]
-    amaru_submit_api: Option<String>,
-    /// Hard ceiling on `SearchUtxos`/`UtxoChanges` page sizes -- a
-    /// request asking for more just gets clamped, not rejected.
-    #[arg(long, default_value_t = 1000)]
-    max_page_size: u32,
-    /// Shared library implementing the DB URI's `vfs=<name>`, loaded once
-    /// at startup (e.g. Litestream's `litestream-vfs` build). Registering
-    /// a VFS is process-wide, not per-connection, so this only needs
-    /// loading once even though every request opens its own connection.
-    /// Omit if `db` doesn't need one (a plain path, or a VFS already
-    /// registered some other way).
-    #[arg(long)]
-    vfs_extension: Option<String>,
-    /// The VFS extension's entry point, if it isn't the SQLite default
-    /// (`sqlite3_<libname>_init`). Litestream's is `sqlite3_litestreamvfs_init`.
-    #[arg(long)]
-    vfs_entry_point: Option<String>,
-}
-
-#[derive(Args)]
 struct TipArgs {
     /// Path to the SQLite index file.
     #[arg(long)]
@@ -175,7 +128,6 @@ fn main() -> Result<()> {
 
     match Cli::parse().command {
         Command::Run(args) => run(args),
-        Command::Serve(args) => serve(args),
         Command::Tip(args) => tip(args),
     }
 }
@@ -207,7 +159,7 @@ fn anchor_from_filename(archive: &str) -> Result<(u64, [u8; 32])> {
         .ok_or_else(|| anyhow!("archive must be named <slot>.<hash>.tar.zst"))
 }
 
-#[instrument(skip(args), fields(db = %args.db, peer = %args.peer, magic = args.magic))]
+#[instrument(skip(args), fields(db = %args.db, peer = args.peer.as_deref(), magic = args.magic))]
 fn run(args: RunArgs) -> Result<()> {
     let mut conn = Connection::open(&args.db)?;
     store::init(&conn)?;
@@ -222,70 +174,67 @@ fn run(args: RunArgs) -> Result<()> {
     };
 
     let requests = Arc::new(floe::metrics::Metrics::default());
-    let db_path: Arc<str> = Arc::from(args.db.as_str());
-    // Cloned out once, up front: `--grpc` and `--http` can both mount
-    // `SubmitTx`, so neither branch below can simply move
-    // `args.amaru_submit_api` out from under the other.
-    let amaru_submit_api = args.amaru_submit_api.clone();
+    let ctx = floe::serve::Ctx {
+        db_path: Arc::from(args.db.as_str()),
+        max_page_size: args.max_page_size,
+        amaru_submit_api: args.amaru_submit_api.clone(),
+        health: health.clone(),
+        requests: requests.clone(),
+    };
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         if let Some(grpc_addr) = args.grpc {
-            let network = floe::domain::network_from_magic(args.magic);
-            let amaru_submit_api = amaru_submit_api.clone();
-            let max_page_size = args.max_page_size;
-            let db_path = db_path.clone();
-            let health = health.clone();
-            let requests = requests.clone();
-            tokio::spawn(async move {
-                if let Err(e) = grpc::serve(
-                    &grpc_addr,
-                    db_path,
-                    network,
-                    max_page_size,
-                    amaru_submit_api,
-                    Some(health),
-                    requests,
-                )
-                .await
-                {
-                    error!(error = %e, "grpc server stopped");
-                }
-            });
+            #[cfg(feature = "grpc")]
+            {
+                let ctx = ctx.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = grpc::serve(&grpc_addr, ctx).await {
+                        error!(error = %e, "grpc server stopped");
+                    }
+                });
+            }
+            #[cfg(not(feature = "grpc"))]
+            bail!("--grpc {grpc_addr}: not compiled in (missing the `grpc` feature)");
         }
 
         if let Some(http_addr) = args.http {
-            let network = floe::domain::network_from_magic(args.magic);
-            let amaru_submit_api = amaru_submit_api.clone();
-            let max_page_size = args.max_page_size;
-            let db_path = db_path.clone();
-            tokio::spawn(async move {
-                if let Err(e) = floe::scheme::http::serve(
-                    &http_addr,
-                    db_path,
-                    network,
-                    max_page_size,
-                    amaru_submit_api,
-                )
-                .await
-                {
-                    error!(error = %e, "http server stopped");
-                }
-            });
+            #[cfg(not(feature = "http-json"))]
+            if args.http_json {
+                bail!("--http-json: not compiled in (missing the `http-json` feature)");
+            }
+            #[cfg(not(feature = "http-cbor"))]
+            if args.http_cbor {
+                bail!("--http-cbor: not compiled in (missing the `http-cbor` feature)");
+            }
+            if !args.http_json && !args.http_cbor {
+                bail!("--http {http_addr}: need --http-json and/or --http-cbor to pick a wire format");
+            }
+
+            #[cfg(any(feature = "http-json", feature = "http-cbor"))]
+            {
+                let ctx = ctx.clone();
+                let formats = floe::serve::scheme::http::query::HttpFormats {
+                    json: args.http_json,
+                    cbor: args.http_cbor,
+                };
+                tokio::spawn(async move {
+                    if let Err(e) = floe::serve::scheme::http::query::serve(&http_addr, ctx, formats).await
+                    {
+                        error!(error = %e, "http server stopped");
+                    }
+                });
+            }
+            #[cfg(not(any(feature = "http-json", feature = "http-cbor")))]
+            bail!(
+                "--http {http_addr}: not compiled in (missing both the `http-json`/`http-cbor` features)"
+            );
         }
 
         if let Some(metrics_addr) = args.metrics {
-            let db_path = db_path.clone();
-            let health = health.clone();
-            let requests = requests.clone();
+            let ctx = ctx.clone();
             tokio::spawn(async move {
-                if let Err(e) = floe::scheme::http::metrics::serve(
-                    &metrics_addr,
-                    db_path,
-                    Some(health),
-                    requests,
-                )
-                .await
+                if let Err(e) = floe::serve::scheme::http::metrics::serve(&metrics_addr, ctx).await
                 {
                     error!(error = %e, "metrics server stopped");
                 }
@@ -322,6 +271,12 @@ fn run(args: RunArgs) -> Result<()> {
         }
         health.set_stage(store::get_mode(&conn)?.into());
 
+        let Some(peer) = args.peer else {
+            info!(mode = ?store::get_mode(&conn)?, "no --peer: serving without a sync loop");
+            std::future::pending::<()>().await;
+            unreachable!("pending future never resolves");
+        };
+
         let point = match store::tip(&conn)? {
             Some((slot, hash)) => Point::Specific(slot, hash.to_vec()),
             None => Point::Origin,
@@ -329,85 +284,13 @@ fn run(args: RunArgs) -> Result<()> {
 
         info!(mode = ?store::get_mode(&conn)?, "connecting");
         let (stats, _conn) =
-            sync::run(args.peer, args.magic, point, conn, None, cfg, Some(health)).await?;
+            sync::run(peer, args.magic, point, conn, None, cfg, Some(health)).await?;
         info!(
             applied = stats.applied,
             rolled_back = stats.rolled_back,
             "sync loop ended"
         );
         Ok(())
-    })
-}
-
-/// No peer, no seed, no sync loop -- just `grpc::serve` against
-/// whatever's at `args.db` right now. Loads the VFS extension once up
-/// front (a VFS is registered process-wide, not per-connection) and
-/// does one sanity read before binding, so a broken replica fails
-/// fast at startup rather than on the first real request.
-#[instrument(skip(args), fields(db = %args.db, magic = args.magic))]
-fn serve(args: ServeArgs) -> Result<()> {
-    if let Some(ext) = &args.vfs_extension {
-        // SAFETY: `vfs_extension` is an operator-supplied path (a CLI
-        // flag, not request input), same trust model as the `--db` path
-        // itself. No SQL runs on this connection while loading is enabled.
-        let conn = Connection::open_in_memory()?;
-        unsafe {
-            let _guard = rusqlite::LoadExtensionGuard::new(&conn)?;
-            conn.load_extension(ext, args.vfs_entry_point.as_deref())?;
-        }
-        info!(extension = %ext, "loaded VFS extension");
-    }
-
-    {
-        let conn = store::query::open_reader(&args.db)?;
-        info!(tip = ?store::tip(&conn)?, mode = ?store::get_mode(&conn)?, "replica readable");
-    }
-
-    let network = floe::domain::network_from_magic(args.magic);
-    let db_path: Arc<str> = Arc::from(args.db.as_str());
-    let requests = Arc::new(floe::metrics::Metrics::default());
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
-        if let Some(http_addr) = args.http {
-            let db_path = db_path.clone();
-            let amaru_submit_api = args.amaru_submit_api.clone();
-            tokio::spawn(async move {
-                if let Err(e) = floe::scheme::http::serve(
-                    &http_addr,
-                    db_path,
-                    network,
-                    args.max_page_size,
-                    amaru_submit_api,
-                )
-                .await
-                {
-                    error!(error = %e, "http server stopped");
-                }
-            });
-        }
-
-        if let Some(metrics_addr) = args.metrics {
-            let db_path = db_path.clone();
-            let requests = requests.clone();
-            tokio::spawn(async move {
-                if let Err(e) =
-                    floe::scheme::http::metrics::serve(&metrics_addr, db_path, None, requests).await
-                {
-                    error!(error = %e, "metrics server stopped");
-                }
-            });
-        }
-
-        grpc::serve(
-            &args.grpc,
-            db_path,
-            network,
-            args.max_page_size,
-            args.amaru_submit_api,
-            None,
-            requests,
-        )
-        .await
     })
 }
 

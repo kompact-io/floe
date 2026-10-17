@@ -1,11 +1,10 @@
 //! floe-integration: integration tests between `floe-server` and
-//! `floe-client` -- a real `floe serve` subprocess, driven two ways.
-//! Not literally end-to-end (no real Cardano peer; see
-//! `floe-server`'s own `sync.rs`/`catchup.rs` for the piece that talks
-//! to one) -- just the server/client wire contract, which is what this
-//! crate was always actually testing despite its old name (`floe-e2e`).
+//! `floe-client` -- a real `floe run` (no `--peer`) subprocess, driven
+//! two ways. Tests the server/client wire contract; no real Cardano
+//! peer (see `floe-server`'s own `sync.rs`/`catchup.rs` for the piece
+//! that talks to one).
 //!
-//! Data round-trips (`ref`/`address`/`pay-cred`/`tx`/`datum`/`changes`)
+//! Data round-trips (`ref`/`address`/`pay-hash`/`tx`/`datum`)
 //! go through `floe_client`'s *library* (`Backend` impls, called
 //! in-process, asserting on typed `floe_dto_http` DTOs) rather than
 //! spawning the `floe-client` binary and scraping its stdout -- once a
@@ -26,23 +25,19 @@
 //! least once -- not an exhaustive cross product of every fixture shape
 //! against every scheme against every pagination edge case (that finer
 //! -grained coverage already exists, cheaper, in `floe-server`'s own
-//! unit tests, e.g. `scheme::grpc::tests`' `utxo_changes_*` cases and
+//! unit tests, e.g. `scheme::grpc::tests`' `search_utxos_*` cases and
 //! `store::query::tests::resolve_handles_every_datum_and_script_shape`).
 //!
 //! CLI-specific behavior -- exit codes, stderr messages on a miss --
 //! has no library-level equivalent (`Backend::tx`/`datum` just return
-//! `Ok(None)`, `Backend::changes` returns `ChangesResponseDto::Stale`;
-//! turning those into a particular exit code and message is
-//! `main.rs`'s own dispatch logic). Those cases still spawn the real
+//! `Ok(None)`; a stale `since` on `Backend::address`/`pay_hash`/
+//! `stake_hash` is a plain `Err`; turning those into a particular exit
+//! code and message is `main.rs`'s own dispatch logic). Those cases
+//! still spawn the real
 //! `floe-client` binary (`run_client`), the only way to exercise that
 //! layer at all -- kept to the default (gRPC) scheme, since the
 //! exit-code logic itself is `dispatch`'s one generic code path, not
 //! per-scheme.
-//!
-//! Rewritten when `floe-server` dropped REST for gRPC (see
-//! `plan-rpc.md`), then again when `floe-client` gained a library
-//! target (see `../../plan-floe-client-as-lib.md`), then renamed
-//! `floe-e2e` -> `floe-integration` to match what it actually tests.
 //!
 //! Finding the `floe`/`floe-client` binaries (still needed for the
 //! CLI-specific tests) is hand-rolled (`target/<profile>/<bin>`
@@ -55,9 +50,9 @@
 //! workspace members too; running `cargo test -p floe-integration` in
 //! isolation needs them already built.
 //!
-//! Each test gets its own fixture DB and its own `floe serve` process
-//! on its own OS-assigned ports -- independent, parallel-safe, no
-//! shared state.
+//! Each test gets its own fixture DB and its own `floe run` (no
+//! `--peer`) process on its own OS-assigned ports -- independent,
+//! parallel-safe, no shared state.
 
 use std::collections::BTreeMap;
 use std::net::{TcpListener, TcpStream};
@@ -65,11 +60,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
 use std::time::Duration;
 
-use floe::catchup::Engine;
-use floe::decode::{DatumKind, DatumRow, DecodedBlock, OutputRef, ScriptRow, TxRow, Utxo};
-use floe::store::{self, BlockMeta};
+use floe::ingest::catchup::Engine;
+use floe::ingest::decode::{DatumKind, DatumRow, DecodedBlock, OutputRef, ScriptRow, TxRow, Utxo};
+use floe::ingest::store::{self, BlockMeta};
 use floe_client::Backend;
-use floe_dto_http::{ChangesResponseDto, ScriptLang};
+use floe_dto_http::cardano::ScriptLang;
+use floe_dto_http::query::{
+    ReadDataRequest, ReadTxRequest, ReadUtxosRequest, SearchUtxosRequest, TxoRef,
+};
 use pallas_addresses::Address;
 use pallas_codec::utils::{Bytes, PositiveCoin};
 use pallas_crypto::hash::Hash;
@@ -108,10 +106,10 @@ fn rand_suffix() -> u64 {
         .as_nanos() as u64
 }
 
-/// `61`-repeated is this whole suite's one fixture pay credential
+/// `61`-repeated is this whole suite's one fixture payment part hash
 /// (every seeded UTxO's header byte `0x61`, mainnet/enterprise/
 /// key-hash).
-const PAY_CRED: [u8; 28] = [0x61u8; 28];
+const PAY_HASH: [u8; 28] = [0x61u8; 28];
 
 const TX0: [u8; 32] = [0u8; 32];
 const TX1: [u8; 32] = [2u8; 32];
@@ -139,12 +137,12 @@ fn asset_cbor() -> Vec<u8> {
     pallas_codec::minicbor::to_vec(&multiasset).expect("infallible")
 }
 
-/// Three UTxOs at the same pay credential, one block: a plain one
+/// Three UTxOs at the same payment part hash, one block: a plain one
 /// (`TX0`, coin 7 -- the suite's simplest case, used by `ref`'s exact-
 /// key lookup), one with an asset and a reference script (`TX1`, coin
 /// 11), and one with a resolved hash-kind datum (`TX2`, coin 13).
-/// Enough shape variety to exercise `UtxoDto`'s whole surface across
-/// every scheme without a combinatorial fixture set -- see this
+/// Enough shape variety to exercise `query::Utxo`'s whole surface
+/// across every scheme without a combinatorial fixture set -- see this
 /// module's doc comment.
 fn seed(path: &Path) {
     let mut conn = Connection::open(path).unwrap();
@@ -154,10 +152,9 @@ fn seed(path: &Path) {
             tx_hash: TX0,
             ix: 0,
         },
-        pay_cred: PAY_CRED,
-        pay_script: false,
-        stake_cred: None,
-        stake_script: None,
+        pay_hash: PAY_HASH,
+        stake_hash: None,
+        address_header: 0x61,
         coin: 7,
         assets: None,
         datum_kind: DatumKind::None,
@@ -169,10 +166,9 @@ fn seed(path: &Path) {
             tx_hash: TX1,
             ix: 0,
         },
-        pay_cred: PAY_CRED,
-        pay_script: false,
-        stake_cred: None,
-        stake_script: None,
+        pay_hash: PAY_HASH,
+        stake_hash: None,
+        address_header: 0x61,
         coin: 11,
         assets: Some(asset_cbor()),
         datum_kind: DatumKind::None,
@@ -184,10 +180,9 @@ fn seed(path: &Path) {
             tx_hash: TX2,
             ix: 0,
         },
-        pay_cred: PAY_CRED,
-        pay_script: false,
-        stake_cred: None,
-        stake_script: None,
+        pay_hash: PAY_HASH,
+        stake_hash: None,
+        address_header: 0x61,
         coin: 13,
         assets: None,
         datum_kind: DatumKind::Hash,
@@ -280,19 +275,26 @@ fn wait_for_port(addr: &str) {
 struct ServerProc {
     child: Child,
     addr: String,
-    http_addr: String,
+    http_json_addr: String,
+    http_cbor_addr: String,
 }
 
 impl ServerProc {
-    /// Binds both `--grpc` and `--http`: most tests only use one, but
-    /// a couple (parity checks) want both schemes live against the
-    /// same DB at once.
+    /// `run` with no `--peer`: binds `--grpc`/`--http` all at once
+    /// (most tests only use one, but a couple -- parity checks --
+    /// want several schemes live against the same DB) with no sync
+    /// loop, since there's no live chain to sync against a fixture DB.
+    /// `--http-json`/`--http-cbor` both accept on the one `--http`
+    /// listener (negotiated per request via `Accept`, not separate
+    /// ports) -- `http_json_addr`/`http_cbor_addr` are thus the same
+    /// address, kept as two fields only so call sites read the same
+    /// either way they mean to connect.
     fn spawn(db_path: &Path) -> Self {
         let addr = format!("127.0.0.1:{}", free_port());
         let http_addr = format!("127.0.0.1:{}", free_port());
         let mut cmd = Command::new(bin_path("floe"));
         cmd.args([
-            "serve",
+            "run",
             "--db",
             db_path.to_str().unwrap(),
             "--magic",
@@ -301,14 +303,22 @@ impl ServerProc {
             &addr,
             "--http",
             &http_addr,
+            "--http-json",
+            "--http-cbor",
+            // `--amaru-submit-api` is mandatory now (`SubmitTx` is always
+            // mounted); none of these tests exercise submission, so a
+            // placeholder that's never dialed is enough.
+            "--amaru-submit-api",
+            "127.0.0.1:1",
         ]);
-        let child = cmd.spawn().expect("spawn `floe serve`");
+        let child = cmd.spawn().expect("spawn `floe run`");
         wait_for_port(&addr);
         wait_for_port(&http_addr);
         Self {
             child,
             addr,
-            http_addr,
+            http_json_addr: http_addr.clone(),
+            http_cbor_addr: http_addr,
         }
     }
 }
@@ -322,7 +332,7 @@ impl Drop for ServerProc {
 
 fn run_client(server_addr: &str, args: &[&str]) -> Output {
     let mut cmd = Command::new(bin_path("floe-client"));
-    cmd.args(["--server", &format!("http://{server_addr}")]);
+    cmd.args(["--grpc", &format!("http://{server_addr}")]);
     cmd.args(args);
     cmd.output().expect("spawn `floe-client`")
 }
@@ -334,93 +344,153 @@ fn run_client(server_addr: &str, args: &[&str]) -> Output {
 /// `http_cbor_backend_full_round_trip` each just supply a different
 /// concrete `client`.
 async fn assert_full_round_trip<B: Backend>(client: &mut B) {
-    // read_ref: the plain UTxO, and a miss.
-    let utxo = client
-        .read_ref(TX0, 0)
+    // read_utxos: the plain UTxO, and a miss (empty `items`, not an
+    // error -- a list RPC, see `ReadUtxosResponse`'s own shape).
+    let resp = client
+        .read_utxos(ReadUtxosRequest {
+            keys: vec![TxoRef { hash: TX0, index: 0 }],
+        })
         .await
-        .unwrap()
-        .expect("TX0 was seeded");
-    assert_eq!(utxo.coin, 7);
-    assert!(client.read_ref([0xffu8; 32], 0).await.unwrap().is_none());
+        .unwrap();
+    assert_eq!(resp.items.len(), 1);
+    assert_eq!(resp.items[0].output.coin, 7);
+    let resp = client
+        .read_utxos(ReadUtxosRequest {
+            keys: vec![TxoRef {
+                hash: [0xffu8; 32],
+                index: 0,
+            }],
+        })
+        .await
+        .unwrap();
+    assert!(resp.items.is_empty());
 
-    // pay_cred: all three rows, tip order, with their asset/script/datum intact.
+    // search_utxos by pay_hash: all three rows, tip order, with their
+    // asset/script/datum intact.
     let page = client
-        .pay_cred(PAY_CRED, floe_client::Paging::default())
+        .search_utxos(SearchUtxosRequest {
+            pay_hash: Some(PAY_HASH),
+            stake_hash: None,
+            since_slot: None,
+            since_hash: None,
+            start_token: None,
+            max_items: None,
+        })
         .await
         .unwrap();
     assert_eq!(page.items.len(), 3);
-    assert_eq!(page.items[0].coin, 7);
-    assert_eq!(page.items[1].coin, 11);
-    assert_eq!(page.items[1].assets.len(), 1);
-    assert_eq!(page.items[1].assets[0].policy_id, ASSET_POLICY);
-    assert_eq!(page.items[1].assets[0].assets[0].name, ASSET_NAME);
-    assert_eq!(page.items[1].assets[0].assets[0].quantity, ASSET_QTY);
+    assert_eq!(page.items[0].output.coin, 7);
+    assert_eq!(page.items[1].output.coin, 11);
+    assert_eq!(page.items[1].output.assets.len(), 1);
+    assert_eq!(page.items[1].output.assets[0].policy_id, ASSET_POLICY);
+    assert_eq!(page.items[1].output.assets[0].assets[0].name, ASSET_NAME);
+    assert_eq!(page.items[1].output.assets[0].assets[0].quantity, ASSET_QTY);
     let script = page.items[1]
+        .output
         .script
         .as_ref()
         .expect("TX1 has a reference script");
     assert_eq!(script.lang, ScriptLang::PlutusV2);
     assert_eq!(script.cbor, SCRIPT_CBOR);
-    assert_eq!(page.items[2].coin, 13);
+    assert_eq!(page.items[2].output.coin, 13);
     let datum = page.items[2]
+        .output
         .datum
         .as_ref()
         .expect("TX2 has a resolved datum");
     assert_eq!(datum.hash, DATUM_HASH);
     assert_eq!(datum.original_cbor.as_deref(), Some(&DATUM_CBOR[..]));
 
-    // address: same fixture, reached via bech32 + client-side credential decomposition.
-    let bech32 = Address::from_bytes(&[&[0x61u8][..], &PAY_CRED].concat())
+    // address: same fixture, reached via bech32 + client-side hash decomposition.
+    let bech32 = Address::from_bytes(&[&[0x61u8][..], &PAY_HASH].concat())
         .unwrap()
         .to_bech32()
         .unwrap();
     let addr: Address = bech32.parse().unwrap();
-    let (pay_cred, stake_cred) = floe_client::shelley_creds(&addr).unwrap();
-    assert_eq!(pay_cred, PAY_CRED);
-    assert_eq!(stake_cred, None);
+    let (pay_hash, stake_hash) = floe_client::shelley_hashes(&addr).unwrap();
+    assert_eq!(pay_hash, PAY_HASH);
+    assert_eq!(stake_hash, None);
     let page = client
-        .address(pay_cred, stake_cred, floe_client::Paging::default())
+        .search_utxos(SearchUtxosRequest {
+            pay_hash: Some(pay_hash),
+            stake_hash,
+            since_slot: None,
+            since_hash: None,
+            start_token: None,
+            max_items: None,
+        })
         .await
         .unwrap();
     assert_eq!(page.items.len(), 3);
 
-    // stake_cred: none of this fixture's rows carry one, so a search for
+    // stake_hash: none of this fixture's rows carry one, so a search for
     // an arbitrary one comes back empty rather than erroring.
     let page = client
-        .stake_cred([0u8; 28], floe_client::Paging::default())
+        .search_utxos(SearchUtxosRequest {
+            pay_hash: None,
+            stake_hash: Some([0u8; 28]),
+            since_slot: None,
+            since_hash: None,
+            start_token: None,
+            max_items: None,
+        })
         .await
         .unwrap();
     assert!(page.items.is_empty());
 
-    // tx: hydrated inputs/outputs, and a miss. `block`/`spent_by` are
-    // the shared "unknown"/`None` shape every scheme's `ReadTx`
-    // equivalent reports (see `floe-dto-http`'s `TxDto` doc comment) --
-    // asserted here as a floor, and cross-scheme agreement is this
-    // file's own `tx_lookup_agrees_across_schemes` test.
-    let tx = client.tx(TX0).await.unwrap().expect("TX0 was seeded");
+    // read_tx: hydrated inputs/outputs, and a miss. Cross-scheme
+    // agreement on their content is this file's own
+    // `tx_lookup_agrees_across_schemes` test.
+    let tx = client
+        .read_tx(ReadTxRequest { hash: TX0 })
+        .await
+        .unwrap()
+        .expect("TX0 was seeded");
     assert_eq!(tx.tx.outputs.len(), 1);
     assert_eq!(tx.tx.outputs[0].coin, 7);
-    assert!(client.tx([0xffu8; 32]).await.unwrap().is_none());
+    assert!(
+        client
+            .read_tx(ReadTxRequest {
+                hash: [0xffu8; 32]
+            })
+            .await
+            .unwrap()
+            .is_none()
+    );
 
-    // datum: the resolved hash-kind datum, and a miss.
+    // read_data: the resolved hash-kind datum, and a miss.
     let datum = client
-        .datum(DATUM_HASH)
+        .read_data(ReadDataRequest { key: DATUM_HASH })
         .await
         .unwrap()
         .expect("seeded above");
-    assert_eq!(datum.native_bytes, DATUM_CBOR);
-    assert!(client.datum([0xffu8; 32]).await.unwrap().is_none());
+    assert_eq!(datum.value.native_bytes, DATUM_CBOR);
+    assert!(
+        client
+            .read_data(ReadDataRequest {
+                key: [0xffu8; 32]
+            })
+            .await
+            .unwrap()
+            .is_none()
+    );
 
-    // changes: everything reported as created from genesis.
-    let params = floe_client::ChangesParams {
-        pay_cred: Some(PAY_CRED),
-        since_slot: Some(0),
-        ..Default::default()
-    };
-    match client.changes(params).await.unwrap() {
-        ChangesResponseDto::Changes(c) => assert_eq!(c.created.len(), 3),
-        ChangesResponseDto::Stale(_) => panic!("since_slot=0 is never stale"),
-    }
+    // pay_hash with since_slot=0: every row matching the hash from
+    // genesis, including anything already spent -- `SearchUtxos`'s
+    // `since` addition, subsuming what `UtxoChanges` used to be a
+    // separate RPC for.
+    let page = client
+        .search_utxos(SearchUtxosRequest {
+            pay_hash: Some(PAY_HASH),
+            stake_hash: None,
+            since_slot: Some(0),
+            since_hash: None,
+            start_token: None,
+            max_items: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), 3);
 }
 
 #[tokio::test]
@@ -439,7 +509,7 @@ async fn http_json_backend_full_round_trip() {
     let db = TempDb::create();
     seed(db.path());
     let server = ServerProc::spawn(db.path());
-    let mut client = floe_client::http_json::Client::new(&server.http_addr);
+    let mut client = floe_client::http_json::Client::new(&server.http_json_addr);
     assert_full_round_trip(&mut client).await;
 }
 
@@ -448,15 +518,17 @@ async fn http_cbor_backend_full_round_trip() {
     let db = TempDb::create();
     seed(db.path());
     let server = ServerProc::spawn(db.path());
-    let mut client = floe_client::http_cbor::Client::new(&server.http_addr);
+    let mut client = floe_client::http_cbor::Client::new(&server.http_cbor_addr);
     assert_full_round_trip(&mut client).await;
 }
 
 /// `--transport grpc` and `--transport http` must report byte-for-byte
 /// identical `tx` content -- not just each individually matching the
 /// fixture (`assert_full_round_trip`'s `tx` checks), but matching each
-/// other, including the shared "unknown block, no `spent_by`" shape
-/// (see `floe-dto-http`'s `TxDto` doc comment).
+/// other. `outputs[0]` is a bare `cardano::TxOutput` on both (see
+/// `floe-dto-http`'s `query::Tx` doc comment) -- it has no
+/// `block_ref`/`spent_by` field to agree or disagree on in the first
+/// place, unlike a `Utxo` row.
 #[tokio::test]
 async fn tx_lookup_agrees_across_schemes() {
     let db = TempDb::create();
@@ -466,22 +538,20 @@ async fn tx_lookup_agrees_across_schemes() {
     let mut grpc = floe_client::grpc::Client::connect(&format!("http://{}", server.addr))
         .await
         .unwrap();
-    let mut http = floe_client::http_json::Client::new(&server.http_addr);
+    let mut http = floe_client::http_json::Client::new(&server.http_json_addr);
 
-    let via_grpc = grpc.tx(TX0).await.unwrap().expect("TX0 was seeded");
-    let via_http = http.tx(TX0).await.unwrap().expect("TX0 was seeded");
+    let via_grpc = grpc
+        .read_tx(ReadTxRequest { hash: TX0 })
+        .await
+        .unwrap()
+        .expect("TX0 was seeded");
+    let via_http = http
+        .read_tx(ReadTxRequest { hash: TX0 })
+        .await
+        .unwrap()
+        .expect("TX0 was seeded");
 
     assert_eq!(via_grpc.tx.outputs[0].coin, via_http.tx.outputs[0].coin);
-    assert_eq!(via_grpc.tx.outputs[0].block, via_http.tx.outputs[0].block);
-    assert_eq!(
-        via_grpc.tx.outputs[0].spent_by,
-        via_http.tx.outputs[0].spent_by
-    );
-    assert_eq!(
-        via_grpc.tx.outputs[0].block,
-        floe_dto_http::ChainPointDto::default()
-    );
-    assert_eq!(via_grpc.tx.outputs[0].spent_by, None);
 }
 
 // --- CLI-specific behavior: exit codes and stderr messages --------------
@@ -492,14 +562,20 @@ async fn tx_lookup_agrees_across_schemes() {
 // not per-scheme, so there's nothing scheme-specific left to cover here.
 
 #[test]
-fn ref_lookup_reports_not_found_for_a_missing_key() {
+fn read_utxos_reports_an_empty_page_for_a_missing_key() {
+    // Unlike `read-tx`/`read-data`, `ReadUtxos` is a list RPC -- a
+    // miss is an empty `items`, not a "not found" exit (see
+    // `ReadUtxosResponse`'s own shape).
     let db = TempDb::create();
     seed(db.path());
     let server = ServerProc::spawn(db.path());
 
-    let out = run_client(&server.addr, &["ref", &"ff".repeat(32), "0"]);
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("not found"));
+    let out = run_client(
+        &server.addr,
+        &["read-utxos", "--key", &format!("{}:0", "ff".repeat(32))],
+    );
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"items\":[]"));
 }
 
 #[test]
@@ -508,7 +584,7 @@ fn tx_lookup_reports_not_found_for_a_missing_hash() {
     seed(db.path());
     let server = ServerProc::spawn(db.path());
 
-    let out = run_client(&server.addr, &["tx", &"ff".repeat(32)]);
+    let out = run_client(&server.addr, &["read-tx", "--hash", &"ff".repeat(32)]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("not found"));
 }
@@ -519,13 +595,13 @@ fn datum_lookup_reports_not_found_for_a_missing_hash() {
     seed(db.path());
     let server = ServerProc::spawn(db.path());
 
-    let out = run_client(&server.addr, &["datum", &"ff".repeat(32)]);
+    let out = run_client(&server.addr, &["read-data", "--key", &"ff".repeat(32)]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("not found"));
 }
 
 #[test]
-fn changes_reports_stale_for_an_unknown_since_hash() {
+fn search_utxos_reports_stale_for_an_unknown_since_hash() {
     let db = TempDb::create();
     seed(db.path());
     let server = ServerProc::spawn(db.path());
@@ -533,9 +609,9 @@ fn changes_reports_stale_for_an_unknown_since_hash() {
     let out = run_client(
         &server.addr,
         &[
-            "changes",
-            "--pay-cred",
-            &hex::encode(PAY_CRED),
+            "search-utxos",
+            "--pay-hash",
+            &hex::encode(PAY_HASH),
             "--since-hash",
             &"ff".repeat(32),
         ],

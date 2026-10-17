@@ -11,8 +11,8 @@
 //!     --point <slot>/<hash-hex> [--blocks N]
 
 use anyhow::{Result, anyhow};
-use floe::store;
-use floe::sync;
+use floe::ingest::store;
+use floe::ingest::sync;
 use pallas_network::miniprotocols::Point;
 use rusqlite::Connection;
 
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
         stats.rolled_back,
         stats.last_block_no,
         stats.peer_tip_block_no,
-        floe::store::get_mode(&conn)?,
+        floe::ingest::store::get_mode(&conn)?,
     );
     println!(
         "utxo count at tip (post-intersect only, no seed): {}",

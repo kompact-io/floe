@@ -1,18 +1,21 @@
-//! http_common: shared REST-transport plumbing for `http_json`/
-//! `http_cbor` -- the raw HTTP/1.1 socket I/O (identical regardless of
-//! wire format) and the path/query-string builders (identical business
-//! logic regardless of wire format too). `http_json.rs`/`http_cbor.rs`
-//! each add only their own `Accept`/`Content-Type` string and
+//! http_common: shared http-transport plumbing for `http_json`/
+//! `http_cbor` -- just the raw HTTP/1.1 socket I/O, identical
+//! regardless of wire format. `http_json.rs`/`http_cbor.rs` each add
+//! only their own `Accept`/`Content-Type` string and request/response
 //! encode/decode glue on top of this.
+//!
+//! Every RPC under `/query`/`/submit` (`floe_dto_http::query`/
+//! `submit`'s `*_PATH` constants) is POST with a body -- the request
+//! DTO travels the same way the response does, so there are no
+//! query-string builders here. `/health`/`/metrics` are the one
+//! exception still served as a bodyless GET (see `get` below).
 
 use anyhow::Result;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::common::{ChangesParams, Cred, Paging, TxHash};
-
 /// Strips the scheme `--server`'s gRPC-flavored default carries --
-/// REST hand-rolls HTTP/1.1 over a raw socket, so it wants bare
+/// this client hand-rolls HTTP/1.1 over a raw socket, so it wants bare
 /// host:port.
 pub fn strip_scheme(server: &str) -> &str {
     server
@@ -34,6 +37,8 @@ fn parse_response(resp: &[u8]) -> Result<(u16, Vec<u8>)> {
     Ok((status, resp[split + 4..].to_vec()))
 }
 
+/// Bodyless GET -- only `/health`/`/metrics` still use this (see
+/// module doc); every RPC under `/query`/`/submit` is `post` below.
 pub(crate) async fn get(addr: &str, path: &str, accept: &str) -> Result<(u16, Vec<u8>)> {
     let mut stream = TcpStream::connect(addr).await?;
     let request = format!(
@@ -45,19 +50,22 @@ pub(crate) async fn get(addr: &str, path: &str, accept: &str) -> Result<(u16, Ve
     parse_response(&resp)
 }
 
-/// `POST /tx`'s shape: body is always raw bytes (`application/cbor`,
-/// matching `floe-server`'s own convention talking to amaru), only the
-/// response is format-negotiated -- same split `scheme::http`'s
-/// `submit_handler` makes server-side.
+/// Every RPC (`SubmitTx`'s raw tx bytes, or a `*Request` DTO already
+/// encoded by the caller in the same format as `accept`) goes through
+/// this one POST -- `content_type` is `application/cbor` unconditionally
+/// for `SubmitTx` (matching `floe-server`'s own convention talking to
+/// amaru, and gRPC's `AnyChainTx.raw`, regardless of wire format),
+/// otherwise whatever `http_json`/`http_cbor` are themselves encoding.
 pub(crate) async fn post(
     addr: &str,
     path: &str,
     body: &[u8],
+    content_type: &str,
     accept: &str,
 ) -> Result<(u16, Vec<u8>)> {
     let mut stream = TcpStream::connect(addr).await?;
     let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/cbor\r\nAccept: {accept}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: {content_type}\r\nAccept: {accept}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(request.as_bytes()).await?;
@@ -67,67 +75,10 @@ pub(crate) async fn post(
     parse_response(&resp)
 }
 
-fn push_query(qs: &mut Vec<String>, key: &str, value: impl std::fmt::Display) {
-    qs.push(format!("{key}={value}"));
-}
-
-/// `GET /utxos` for `pay_cred`/`stake_cred` (and, via `ref_path` below,
-/// `ref`) -- same query shape `floe-server`'s `scheme::http` parses.
-pub(crate) fn utxos_path(
-    pay_cred: Option<Cred>,
-    stake_cred: Option<Cred>,
-    paging: &Paging,
-) -> String {
-    let mut qs = Vec::new();
-    if let Some(p) = pay_cred {
-        push_query(&mut qs, "pay_cred", hex::encode(p));
-    }
-    if let Some(d) = stake_cred {
-        push_query(&mut qs, "stake_cred", hex::encode(d));
-    }
-    if let Some(after) = &paging.after {
-        push_query(&mut qs, "after", after);
-    }
-    if let Some(limit) = paging.limit {
-        push_query(&mut qs, "limit", limit);
-    }
-    format!("/utxos?{}", qs.join("&"))
-}
-
-pub(crate) fn ref_path(tx_hash: TxHash, ix: u32) -> String {
-    format!("/utxos?ref={}:{ix}", hex::encode(tx_hash))
-}
-
-pub(crate) fn tx_path(tx_hash: TxHash) -> String {
-    format!("/tx/{}", hex::encode(tx_hash))
-}
-
-pub(crate) fn data_path(hash: TxHash) -> String {
-    format!("/data/{}", hex::encode(hash))
-}
-
-pub(crate) fn changes_path(params: &ChangesParams) -> String {
-    let mut qs = Vec::new();
-    if let Some(p) = params.pay_cred {
-        push_query(&mut qs, "pay_cred", hex::encode(p));
-    }
-    if let Some(d) = params.stake_cred {
-        push_query(&mut qs, "stake_cred", hex::encode(d));
-    }
-    if let Some(s) = params.since_slot {
-        push_query(&mut qs, "since_slot", s);
-    }
-    if let Some(h) = &params.since_hash {
-        push_query(&mut qs, "since_hash", hex::encode(h));
-    }
-    if let Some(n) = params.max_items {
-        push_query(&mut qs, "limit", n);
-    }
-    if let Some(c) = &params.created_after {
-        push_query(&mut qs, "created_after", c);
-    }
-    if let Some(c) = &params.spent_after {
-        push_query(&mut qs, "spent_after", c);
-    }
-    format!("/changes?{}", qs.join("&"))
-}
+/// `/health`/`/metrics` live on `floe-server`'s own dedicated listener
+/// (`--metrics`), not the query listener this client's `addr` points
+/// at -- these paths only resolve when a deployment happens to
+/// colocate the two. See `Backend::health`'s doc for how a caller
+/// should treat that.
+pub(crate) const HEALTH_PATH: &str = "/health";
+pub(crate) const METRICS_PATH: &str = "/metrics";
