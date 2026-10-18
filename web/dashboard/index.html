@@ -47,37 +47,45 @@
     const REFRESH_MS = 10000;
     const plots = new Map();
 
+    const COLOR_PALETTE = ['#22c55e', '#22d3ee', '#c084fc', '#f97316', '#eab308', '#ef4444'];
+
     const CHARTS = [
       {
         id: 'chart-applied',
         query: 'increase(floe_applied_total[1m])',
         label: 'Applied/min',
-        color: '#22d3ee', // Cyan
-        fill: 'transparent'
+        color: '#22d3ee' // Cyan
       },
       {
         id: 'chart-utxos',
         query: 'floe_utxo_count',
         label: 'UTxOs',
-        color: '#c084fc', // Purple
-        fill: 'transparent'
+        color: '#c084fc' // Purple
       },
       {
         id: 'chart-requests',
         query: 'sum(rate(floe_requests_total[1m])) by (scheme)',
         label: 'Requests',
-        color: '#22c55e', // Green
-        fill: 'transparent'
+        color: '#22c55e' // Green
       }
     ];
 
-    function createPlotOptions(containerEl, label, color, fill) {
+    function formatCompactNumber(v) {
+      if (v === null || v === undefined || Number.isNaN(v)) return '';
+      const abs = Math.abs(v);
+      if (abs >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+      if (abs >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+      if (abs >= 1e3) return (v / 1e3).toFixed(2) + 'K';
+      return Number.isInteger(v) ? String(v) : v.toFixed(2);
+    }
+
+    function createPlotOptions(containerEl, seriesDefs) {
       return {
         width: containerEl.clientWidth,
         height: containerEl.clientHeight,
         series: [
           { label: "TIME", value: (self, v) => v ? new Date(v * 1000).toLocaleTimeString() : "--" },
-          { label: label.toUpperCase(), stroke: color, fill: fill, width: 2 }
+          ...seriesDefs.map(s => ({ label: s.label, stroke: s.color, fill: 'transparent', width: 2 }))
         ],
         axes: [
           {
@@ -88,9 +96,12 @@
           {
             stroke: "#ffffff",
             grid: { stroke: "#27272a", width: 1 },
-            font: "10px 'JetBrains Mono', monospace"
+            font: "10px 'JetBrains Mono', monospace",
+            size: 64,
+            values: (self, ticks) => ticks.map(formatCompactNumber)
           }
-        ]
+        ],
+        legend: { show: seriesDefs.length > 1 }
       };
     }
 
@@ -103,16 +114,15 @@
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const json = await res.json();
 
-      if (!json.data || !json.data.result.length) return [[], []];
+      if (!json.data || !json.data.result.length) return { timestamps: [], series: [] };
 
-      const timestamps = [];
-      const values = [];
-      json.data.result[0].values.forEach(v => {
-        timestamps.push(v[0]);
-        values.push(parseFloat(v[1]));
-      });
+      const timestamps = json.data.result[0].values.map(v => v[0]);
+      const series = json.data.result.map(r => ({
+        label: (r.metric.scheme || r.metric.__name__ || Object.values(r.metric)[0] || 'value').toUpperCase(),
+        values: r.values.map(v => parseFloat(v[1]))
+      }));
 
-      return [timestamps, values];
+      return { timestamps, series };
     }
 
     function setConnected(ok) {
@@ -124,19 +134,26 @@
       let ok = true;
       for (const config of CHARTS) {
         const container = document.getElementById(config.id);
-        let data;
+        let timestamps = [], series = [];
         try {
-          data = await fetchQueryData(config.query);
+          ({ timestamps, series } = await fetchQueryData(config.query));
         } catch (e) {
           console.error('Fetch failed', e);
           ok = false;
-          data = [[], []];
         }
 
-        if (!plots.has(config.id)) {
-          const opts = createPlotOptions(container, config.label, config.color, config.fill);
+        const seriesDefs = series.length
+          ? series.map((s, i) => ({ label: s.label, color: COLOR_PALETTE[i % COLOR_PALETTE.length] }))
+          : [{ label: config.label.toUpperCase(), color: config.color }];
+        const data = [timestamps, ...(series.length ? series.map(s => s.values) : [[]])];
+
+        const existing = plots.get(config.id);
+        if (!existing || existing.seriesCount !== seriesDefs.length) {
+          existing?.resizeObserver.disconnect();
+          existing?.instance.destroy();
+
+          const opts = createPlotOptions(container, seriesDefs);
           const instance = new uPlot(opts, data, container);
-          plots.set(config.id, instance);
 
           const resizeObserver = new ResizeObserver(entries => {
             for (let entry of entries) {
@@ -147,8 +164,10 @@
             }
           });
           resizeObserver.observe(container);
+
+          plots.set(config.id, { instance, resizeObserver, seriesCount: seriesDefs.length });
         } else {
-          plots.get(config.id).setData(data);
+          existing.instance.setData(data);
         }
       }
       setConnected(ok);

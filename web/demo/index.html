@@ -40,12 +40,28 @@
 
       <!-- SearchUtxos -->
       <div class="field rpc-fields" data-rpc="searchUtxos">
-        <label for="search-pay-hash">Pay hash (hex, optional)</label>
+        <label for="search-address">Address (bech32 or hex, optional)</label>
+        <input id="search-address" type="text" placeholder="addr1…/stake1…/addr_test1…/stake_test1… -- decomposed into pay/stake hash below" />
+      </div>
+      <div class="field rpc-fields" data-rpc="searchUtxos">
+        <label for="search-pay-hash">Pay hash (28-byte hex, optional if address given)</label>
         <input id="search-pay-hash" type="text" placeholder="28-byte hex" />
       </div>
       <div class="field rpc-fields" data-rpc="searchUtxos">
-        <label for="search-stake-hash">Stake hash (hex, optional)</label>
+        <label for="search-stake-hash">Stake hash (28-byte hex, optional)</label>
         <input id="search-stake-hash" type="text" placeholder="28-byte hex" />
+      </div>
+      <div class="field rpc-fields" data-rpc="searchUtxos">
+        <label for="search-since-slot">Since slot (optional)</label>
+        <input id="search-since-slot" type="number" placeholder="only UTxOs at/after this slot" />
+      </div>
+      <div class="field rpc-fields" data-rpc="searchUtxos">
+        <label for="search-since-hash">Since block hash (hex, optional)</label>
+        <input id="search-since-hash" type="text" placeholder="32-byte hex, pairs with since slot" />
+      </div>
+      <div class="field rpc-fields" data-rpc="searchUtxos">
+        <label for="search-start-token">Start token (optional)</label>
+        <input id="search-start-token" type="text" placeholder="next_token from a previous page" />
       </div>
       <div class="field rpc-fields" data-rpc="searchUtxos">
         <label for="search-max-items">Max items (optional)</label>

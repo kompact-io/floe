@@ -37,8 +37,6 @@ jobs:
         include:
           - flake_attr: floe
             asset_name: floe-x86_64-unknown-linux-gnu
-          - flake_attr: floe-x86_64-unknown-linux-musl
-            asset_name: floe-x86_64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main

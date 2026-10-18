@@ -4,10 +4,7 @@ name: CI
 # flake.nix's `checks` output -- fmt, clippy, and the native (host-arch)
 # package builds -- so a broken build/lint/format is caught on every
 # push, not just when a release tag happens to trigger release.yml's
-# `verify` job. Deliberately excludes the musl cross-build checks
-# (`floe-<target>` for each entry in flake.nix's `crossPkgsByTarget`) --
-# those only matter for release artifacts and roughly double the run
-# time; release.yml's `build` job still exercises them on tag pushes.
+# `verify` job.
 on:
   push:
   pull_request:

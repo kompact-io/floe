@@ -71,3 +71,33 @@ impl WasmClient {
         serde_json::to_string(&resp).map_err(|e| e.to_string())
     }
 }
+
+#[derive(serde::Serialize)]
+struct DecodedAddress {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pay_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stake_hash: Option<String>,
+}
+
+/// JS counterpart of `--address` on the CLI. `shelley_hashes` only
+/// covers payment addresses, so `Stake` is decomposed here instead.
+#[wasm_bindgen(js_name = decodeAddress)]
+pub fn decode_address(address: String) -> Result<String, String> {
+    let addr: pallas_addresses::Address = address.parse().map_err(|e| format!("{e}"))?;
+    let decoded = match &addr {
+        pallas_addresses::Address::Stake(stake) => DecodedAddress {
+            pay_hash: None,
+            stake_hash: Some(hex::encode(stake.payload().as_hash())),
+        },
+        _ => {
+            let (pay_hash, stake_hash) =
+                crate::shelley_hashes(&addr).map_err(|e| e.to_string())?;
+            DecodedAddress {
+                pay_hash: Some(hex::encode(pay_hash)),
+                stake_hash: stake_hash.map(hex::encode),
+            }
+        }
+    };
+    serde_json::to_string(&decoded).map_err(|e| e.to_string())
+}

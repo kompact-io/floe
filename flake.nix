@@ -5,9 +5,9 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     crane.url = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
-    # Only needed for cross/non-host toolchains (e.g. musl static builds);
-    # nixpkgs' own rustc only ships the host's target, so a cross target's
-    # std has to come from somewhere that lets you pick targets a la carte.
+    # Only needed for wasm32-unknown-unknown; nixpkgs' own rustc only ships
+    # the host's target, so that std has to come from somewhere that lets
+    # you pick targets a la carte.
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -41,9 +41,9 @@
         };
 
         # One crate set (floe + the two probe examples + their checks),
-        # parameterized by craneLib so the same definitions serve the host
-        # toolchain and any cross toolchain below -- nothing about *what*
-        # gets built differs per target, only *which compiler* builds it.
+        # parameterized by craneLib so the same definitions serve both the
+        # host toolchain here and the wasm one below -- nothing about
+        # *what* gets built differs, only *which compiler* builds it.
         mkCrateSet = { craneLib, extraArgs ? { } }:
           let
             commonArgs = {
@@ -81,41 +81,6 @@
           };
 
         native = mkCrateSet { craneLib = crane.mkLib pkgs; };
-
-        # Cross targets: triple -> the nixpkgs cross package set that
-        # supplies a matching C toolchain (for rusqlite's bundled sqlite,
-        # zstd-sys, and tikv-jemalloc-sys -- all of which compile C, which
-        # fenix's rustc alone doesn't provide a cross linker for). Add an
-        # entry here (and, if it's a genuinely new architecture rather than
-        # just musl-vs-glibc on one already covered, a `cross.<name>`
-        # package below) to support another target.
-        crossPkgsByTarget = {
-          "x86_64-unknown-linux-musl" = pkgs.pkgsCross.musl64;
-        };
-
-        mkCrossCrateSet = target:
-          let
-            crossPkgs = crossPkgsByTarget.${target};
-            cc = "${crossPkgs.stdenv.cc}/bin/${crossPkgs.stdenv.cc.targetPrefix}cc";
-            targetEnvSuffix = builtins.replaceStrings [ "-" ] [ "_" ] target;
-            targetEnvUpper = nixpkgs.lib.toUpper targetEnvSuffix;
-            toolchain = fenix.packages.${system}.combine [
-              fenix.packages.${system}.stable.toolchain
-              fenix.packages.${system}.targets.${target}.stable.rust-std
-            ];
-            craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
-          in
-          mkCrateSet {
-            inherit craneLib;
-            extraArgs = {
-              CARGO_BUILD_TARGET = target;
-              "CARGO_TARGET_${targetEnvUpper}_LINKER" = cc;
-              "CC_${targetEnvSuffix}" = cc;
-              TARGET_CC = cc;
-            };
-          };
-
-        cross = nixpkgs.lib.mapAttrs (target: _: mkCrossCrateSet target) crossPkgsByTarget;
 
         # wasm32-unknown-unknown: no C toolchain needed (no native deps),
         # just fenix's std for the target.
@@ -160,22 +125,18 @@
           default = native.floe;
           inherit (native) chainsync-probe seed-probe floe floe-client floe-smoke;
           inherit floe-client-wasm floe-web-dashboard floe-web-demo;
-        } // nixpkgs.lib.mapAttrs' (target: pkgs':
-          nixpkgs.lib.nameValuePair "floe-${target}" pkgs'.floe
-        ) cross;
+        };
 
         apps.default = {
           type = "app";
           program = "${native.floe}/bin/floe";
         };
 
-        checks = native.checks // { fmt = (crane.mkLib pkgs).cargoFmt { inherit src; }; } // nixpkgs.lib.concatMapAttrs (target: pkgs':
-          nixpkgs.lib.mapAttrs' (name: v: nixpkgs.lib.nameValuePair "${name}-${target}" v) pkgs'.checks
-        ) cross;
+        checks = native.checks // { fmt = (crane.mkLib pkgs).cargoFmt { inherit src; }; };
 
         devShells.default = native.craneLib.devShell {
           checks = self.checks.${system};
-          packages = [ pkgs.rust-analyzer pkgs.sqlite ];
+          packages = [ pkgs.rust-analyzer pkgs.sqlite  pkgs.wasm-bindgen-cli ];
           # jemalloc's bundled `configure` probes compile at -O0 (debug
           # profile) under `-Werror`; glibc's features.h treats
           # _FORTIFY_SOURCE at -O0 as a hard warning, which then aborts

@@ -6,7 +6,7 @@
 // `floe_dto_http::ser_hex`/`de_hex_array`), not anything bespoke to this
 // page.
 
-import init, { WasmClient } from './pkg/floe_client.js';
+import init, { WasmClient, decodeAddress } from './pkg/floe_client.js';
 
 const rpcSelect = document.getElementById('rpc');
 const runButton = document.getElementById('run');
@@ -36,12 +36,25 @@ function buildRequest(rpc) {
     case 'readUtxos':
       return { keys: parseKeys(document.getElementById('read-utxos-keys').value) };
     case 'searchUtxos': {
-      const payHash = document.getElementById('search-pay-hash').value.trim();
-      const stakeHash = document.getElementById('search-stake-hash').value.trim();
+      const address = document.getElementById('search-address').value.trim();
+      let payHash = document.getElementById('search-pay-hash').value.trim() || null;
+      let stakeHash = document.getElementById('search-stake-hash').value.trim() || null;
+      if (address) {
+        const decoded = JSON.parse(decodeAddress(address));
+        payHash = decoded.pay_hash ?? null;
+        stakeHash = decoded.stake_hash ?? null;
+      }
+
+      const sinceSlot = document.getElementById('search-since-slot').value.trim();
+      const sinceHash = document.getElementById('search-since-hash').value.trim();
+      const startToken = document.getElementById('search-start-token').value.trim();
       const maxItems = document.getElementById('search-max-items').value.trim();
       return {
-        pay_hash: payHash || null,
-        stake_hash: stakeHash || null,
+        pay_hash: payHash,
+        stake_hash: stakeHash,
+        since_slot: sinceSlot ? Number(sinceSlot) : null,
+        since_hash: sinceHash || null,
+        start_token: startToken || null,
         max_items: maxItems ? Number(maxItems) : null,
       };
     }
