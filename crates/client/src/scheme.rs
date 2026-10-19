@@ -87,7 +87,8 @@ fn grpc_url(addr: &str) -> String {
 }
 
 /// gRPC connect fails outright if the port isn't listening yet, unlike
-/// HTTP's `Client::new` -- needs its own retry loop.
+/// HTTP's `Client::connect` (no I/O until the first real request) --
+/// needs its own retry loop.
 #[cfg(feature = "grpc")]
 async fn connect_grpc_with_retry(
     server: &str,
@@ -180,8 +181,10 @@ impl Backend for AnyClient {
 }
 
 /// Connects the concrete `Client` for `scheme` -- gRPC retries until
-/// listening (`ready_timeout`); http just builds the address-only
-/// client. Each scheme gated by its own compile-time feature, matching
+/// listening (`ready_timeout`); http just builds its pooled
+/// `reqwest::Client` (no I/O of its own, see `http_json::Client::connect`'s
+/// doc comment for why it's still `async fn(&str) -> Result<Self>`).
+/// Each scheme gated by its own compile-time feature, matching
 /// `floe-server`'s own "not compiled in" `bail!` message style.
 #[allow(unused_variables)] // `args`/`ready_timeout` unused when no scheme feature is compiled in
 pub async fn connect(
@@ -211,7 +214,9 @@ pub async fn connect(
                 let server = args.http.as_deref().expect(
                     "Scheme::HttpJson only chosen when --http-json (requires --http) is given",
                 );
-                Ok(AnyClient::HttpJson(crate::http_json::Client::new(server)))
+                Ok(AnyClient::HttpJson(
+                    crate::http_json::Client::connect(server).await?,
+                ))
             }
             #[cfg(not(feature = "http-json"))]
             anyhow::bail!("--http-json: not compiled in (missing the `http-json` feature)");
@@ -222,7 +227,9 @@ pub async fn connect(
                 let server = args.http.as_deref().expect(
                     "Scheme::HttpCbor only chosen when --http-cbor (requires --http) is given",
                 );
-                Ok(AnyClient::HttpCbor(crate::http_cbor::Client::new(server)))
+                Ok(AnyClient::HttpCbor(
+                    crate::http_cbor::Client::connect(server).await?,
+                ))
             }
             #[cfg(not(feature = "http-cbor"))]
             anyhow::bail!("--http-cbor: not compiled in (missing the `http-cbor` feature)");

@@ -30,6 +30,22 @@ impl Metrics {
             .or_insert(0) += 1;
     }
 
+    /// Marks `scheme` as live (called once, when `main.rs` actually
+    /// starts that scheme's listener) so it's always reported at 0
+    /// rather than being absent from `/metrics` until its first
+    /// request -- lazily-created Prometheus series can't be told
+    /// apart from "no such scheme" by anything scraping this. The
+    /// empty `method` is a sentinel, not a real route; real
+    /// `record()` calls accumulate in their own `(scheme, method)`
+    /// entries alongside it.
+    pub fn register(&self, scheme: Scheme) {
+        self.counts
+            .lock()
+            .unwrap()
+            .entry((scheme, String::new()))
+            .or_insert(0);
+    }
+
     fn request_counts(&self) -> Vec<RequestCount> {
         self.counts
             .lock()
@@ -45,14 +61,15 @@ impl Metrics {
 }
 
 /// `/metrics`/`GetMetrics` payload: `health`'s throughput counters +
-/// `utxo_count` (DB-sourced, fetched by the caller) + `requests`'
-/// scheme-labeled counts.
-pub fn snapshot(health: &Health, utxo_count: u64, requests: &Metrics) -> MetricsResponse {
+/// `requests`' scheme-labeled counts. No DB access at all -- see
+/// `floe_dto_http::health::MetricsResponse`'s own doc for why there's
+/// no live UTxO-set gauge here anymore.
+pub fn snapshot(health: &Health, requests: &Metrics) -> MetricsResponse {
     MetricsResponse {
         applied_total: health.applied_total(),
         rolled_back_total: health.rolled_back_total(),
         utxos_created_total: health.utxos_created_total(),
-        utxo_count,
+        utxos_spent_total: health.utxos_spent_total(),
         requests: requests.request_counts(),
     }
 }

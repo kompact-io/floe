@@ -51,8 +51,9 @@ message MetricsResponse {
   uint64 applied_total = 1;
   uint64 rolled_back_total = 2;
   uint64 utxos_created_total = 3;
-  uint64 utxo_count = 4;
+  reserved 4; // was utxo_count -- see floe-dto-http's MetricsResponse doc
   repeated RequestCount requests = 5;
+  uint64 utxos_spent_total = 6;
 }
 
 service HealthService {

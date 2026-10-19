@@ -118,6 +118,7 @@ END;
 /// full scans, i.e. ~2*10^12 row touches -- not slow, effectively never
 /// finishes. This must exist before the first `sweep`/rollback/prune
 /// call, same as every other index here.
+///
 const SECONDARY_INDEXES_SQL: &str = r#"
 CREATE INDEX IF NOT EXISTS utxo_created ON utxo(slot);
 CREATE INDEX IF NOT EXISTS utxo_spent   ON utxo(spent_slot)  WHERE spent_slot IS NOT NULL;
@@ -509,15 +510,6 @@ pub fn prune(conn: &mut Connection, k: u64) -> Result<PruneStats> {
         block_rows,
         tx_rows,
     })
-}
-
-/// Returns the number of unspent UTxOs (the tip set).
-pub fn utxo_count(conn: &Connection) -> Result<u64> {
-    Ok(conn.query_row(
-        "SELECT COUNT(*) FROM utxo WHERE spent_slot IS NULL",
-        [],
-        |r| r.get(0),
-    )?)
 }
 
 /// Bounds WAL growth across a long catch-up run.

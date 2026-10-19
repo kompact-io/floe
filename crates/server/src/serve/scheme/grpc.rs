@@ -641,7 +641,7 @@ mod tests {
         // `NotReady` from the DB-level `Mode` check inside `query::`,
         // unaffected by this.
         let health = Arc::new(crate::health::Health::default());
-        health.record_apply(store::Mode::Running, 1, 1, [0; 32], 1, 0);
+        health.record_apply(store::Mode::Running, 1, 1, [0; 32], 1, 0, 0);
         let ctx = Ctx {
             db_path,
             max_page_size: 1000,

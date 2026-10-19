@@ -45,8 +45,17 @@ in
     };
     metrics = mkOption {
       type = types.nullOr types.str;
-      default = null;
-      description = "host:port to serve /health and /metrics (Prometheus text) on.";
+      # On by default (loopback-bound, like `grpc`'s own default) --
+      # `/health` is meant as a reliable liveness check (its content is
+      # public on-chain data, nothing sensitive), so a deployment
+      # shouldn't have to remember to opt in just to get one. The
+      # reverse proxy in front (e.g. Caddy, machine-config's job, not
+      # this module's) decides what's actually exposed publicly --
+      # typically `/health` yes, `/metrics` no (per-scheme request
+      # counts are an operational/usage signal, not liveness). Set to
+      # `null` to disable the listener outright.
+      default = "127.0.0.1:9100";
+      description = "host:port to serve /health and /metrics (Prometheus text) on, or null to disable. Loopback-bound by default -- front it with a reverse proxy to expose /health (not /metrics) publicly.";
     };
     amaruSubmitApi = mkOption {
       type = types.nullOr types.str;

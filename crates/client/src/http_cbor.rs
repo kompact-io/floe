@@ -1,14 +1,15 @@
-//! http_cbor: the CBOR wire format over `http_common`'s shared socket
-//! I/O -- `Accept: application/cbor`, `Content-Type: application/cbor`,
-//! `minicbor`/`floe-dto-http`'s `Encode`/`Decode` derives for both the
-//! request and the response. Mirror image of `http_json.rs`.
+//! http_cbor: the CBOR wire format over `http_common`'s pooled
+//! `reqwest::Client` -- `Accept: application/cbor`,
+//! `Content-Type: application/cbor`, `minicbor`/`floe-dto-http`'s
+//! `Encode`/`Decode` derives for both the request and the response.
+//! Mirror image of `http_json.rs`.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use crate::common::Backend;
 use crate::http_common;
 use floe_dto_http::ErrorBody;
-use floe_dto_http::health::{HealthResponse, MetricsResponse};
+use floe_dto_http::health::{HEALTH_PATH, HealthResponse, METRICS_PATH, MetricsResponse};
 use floe_dto_http::query::{
     ReadDataRequest, ReadDataResponse, ReadTxRequest, ReadTxResponse, ReadUtxosRequest,
     ReadUtxosResponse, SearchUtxosRequest, SearchUtxosResponse,
@@ -16,18 +17,26 @@ use floe_dto_http::query::{
 use floe_dto_http::submit::SubmitTxResponse;
 
 pub struct Client {
-    addr: String,
+    http: reqwest::Client,
+    base: String,
 }
 
 impl Client {
-    pub fn new(server: &str) -> Self {
-        Self {
-            addr: http_common::strip_scheme(server).to_string(),
-        }
+    /// Mirrors `grpc::Client::connect`'s shape -- see
+    /// `http_json::Client::connect`'s doc comment for why.
+    pub async fn connect(server: &str) -> Result<Self> {
+        let http = reqwest::Client::builder()
+            .build()
+            .context("building the HTTP client")?;
+        Ok(Self {
+            http,
+            base: http_common::base_url(server),
+        })
     }
 
     async fn fetch<T: for<'b> minicbor::Decode<'b, ()>>(&self, path: &str) -> Result<T> {
-        let (status, body) = http_common::get(&self.addr, path, "application/cbor").await?;
+        let (status, body) =
+            http_common::get(&self.http, &self.base, path, "application/cbor").await?;
         decode(status, &body)
     }
 
@@ -42,7 +51,8 @@ impl Client {
         let mut body = Vec::new();
         minicbor::encode(req, &mut body)?;
         let (status, body) = http_common::post(
-            &self.addr,
+            &self.http,
+            &self.base,
             path,
             &body,
             "application/cbor",
@@ -62,7 +72,8 @@ impl Client {
         let mut body = Vec::new();
         minicbor::encode(req, &mut body)?;
         let (status, body) = http_common::post(
-            &self.addr,
+            &self.http,
+            &self.base,
             path,
             &body,
             "application/cbor",
@@ -109,7 +120,8 @@ impl Backend for Client {
 
     async fn submit_tx(&mut self, raw: Vec<u8>) -> Result<SubmitTxResponse> {
         let (status, body) = http_common::post(
-            &self.addr,
+            &self.http,
+            &self.base,
             floe_dto_http::submit::SUBMIT_TX_PATH,
             &raw,
             "application/cbor",
@@ -120,10 +132,10 @@ impl Backend for Client {
     }
 
     async fn get_health(&mut self) -> Result<HealthResponse> {
-        self.fetch(http_common::HEALTH_PATH).await
+        self.fetch(HEALTH_PATH).await
     }
 
     async fn get_metrics(&mut self) -> Result<MetricsResponse> {
-        self.fetch(http_common::METRICS_PATH).await
+        self.fetch(METRICS_PATH).await
     }
 }

@@ -241,8 +241,8 @@ async fn run_smoke<B: Backend>(client: &mut B, cli: &Cli, scheme: Scheme) -> Res
             match client.get_metrics().await {
                 Ok(m) => {
                     record(Step::Ok(format!(
-                        "[{scheme}] GetMetrics: utxo_count={} applied_total={}",
-                        m.utxo_count, m.applied_total
+                        "[{scheme}] GetMetrics: utxos_created_total={} utxos_spent_total={} applied_total={}",
+                        m.utxos_created_total, m.utxos_spent_total, m.applied_total
                     )));
                     Some(m)
                 }

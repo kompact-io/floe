@@ -357,6 +357,7 @@ pub fn apply_loop(
                         meta.hash,
                         peer_tip_block_no,
                         decoded.created.len() as u64,
+                        decoded.spent.len() as u64,
                     );
                 }
             }
@@ -415,9 +416,4 @@ pub async fn run(
     // fail and return Ok(()); if it errored instead, surface that here.
     fetch_task.await??;
     Ok(stats)
-}
-
-/// Returns the number of unspent UTxOs (the tip set).
-pub fn utxo_count(conn: &Connection) -> Result<u64> {
-    store::utxo_count(conn)
 }

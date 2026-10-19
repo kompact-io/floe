@@ -4,3 +4,5 @@ result
 *.sqlite*
 /crates/server/db
 .direnv/
+.env
+.ssh/

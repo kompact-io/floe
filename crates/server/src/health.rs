@@ -50,6 +50,7 @@ pub struct Health {
     applied: AtomicU64,
     rolled_back: AtomicU64,
     utxos_created: AtomicU64,
+    utxos_spent: AtomicU64,
     /// Not an atomic: a 32-byte hash, written once per applied block --
     /// nowhere near hot enough to need lock-free.
     tip_hash: Mutex<TxHash>,
@@ -64,6 +65,10 @@ impl Health {
         self.magic.store(magic, Ordering::Relaxed);
     }
 
+    // One applied block's full update, all positional: adding
+    // `utxos_spent` tipped this past clippy's default arg-count limit,
+    // not worth a dedicated params struct for one caller.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_apply(
         &self,
         mode: Mode,
@@ -72,6 +77,7 @@ impl Health {
         hash: TxHash,
         peer_tip_block_no: u64,
         utxos_created: u64,
+        utxos_spent: u64,
     ) {
         self.set_stage(mode.into());
         let threshold = if self.fresh.load(Ordering::Relaxed) {
@@ -91,6 +97,7 @@ impl Health {
         self.applied.fetch_add(1, Ordering::Relaxed);
         self.utxos_created
             .fetch_add(utxos_created, Ordering::Relaxed);
+        self.utxos_spent.fetch_add(utxos_spent, Ordering::Relaxed);
         *self.tip_hash.lock().unwrap() = hash;
     }
 
@@ -122,6 +129,10 @@ impl Health {
 
     pub fn utxos_created_total(&self) -> u64 {
         self.utxos_created.load(Ordering::Relaxed)
+    }
+
+    pub fn utxos_spent_total(&self) -> u64 {
+        self.utxos_spent.load(Ordering::Relaxed)
     }
 
     /// `/health`/`GetHealth` payload.

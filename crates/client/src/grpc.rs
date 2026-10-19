@@ -6,7 +6,7 @@
 //! the same `floe-dto-http` DTOs every scheme takes/returns.
 
 use anyhow::Result;
-use tonic::transport::Channel;
+use tonic::transport::{Channel, ClientTlsConfig};
 
 use floe_dto_grpc::floe::v1::cardano as c;
 use floe_dto_grpc::floe::v1::health as h;
@@ -30,7 +30,18 @@ pub struct Client {
 
 impl Client {
     pub async fn connect(server: &str) -> Result<Self> {
-        let channel = Channel::from_shared(server.to_string())?.connect().await?;
+        // `Channel::from_shared` (unlike `Endpoint::new`'s own, hidden
+        // auto-detection) doesn't enable TLS on its own just because
+        // the URL is `https://` -- without this, dialing a TLS-fronted
+        // gRPC deployment fails outright with "Connecting to HTTPS
+        // without TLS enabled". Default (webpki) roots, no client
+        // cert -- same trust story as `http_json`/`http_cbor`'s
+        // `reqwest` transport.
+        let mut endpoint = Channel::from_shared(server.to_string())?;
+        if server.starts_with("https://") {
+            endpoint = endpoint.tls_config(ClientTlsConfig::new().with_enabled_roots())?;
+        }
+        let channel = endpoint.connect().await?;
         Ok(Self {
             query: QueryServiceClient::new(channel.clone()),
             submit: SubmitServiceClient::new(channel.clone()),
@@ -78,7 +89,7 @@ fn metrics_response_dto(resp: h::MetricsResponse) -> hh::MetricsResponse {
         applied_total: resp.applied_total,
         rolled_back_total: resp.rolled_back_total,
         utxos_created_total: resp.utxos_created_total,
-        utxo_count: resp.utxo_count,
+        utxos_spent_total: resp.utxos_spent_total,
         requests: resp
             .requests
             .into_iter()

@@ -508,7 +508,9 @@ async fn http_json_backend_full_round_trip() {
     let db = TempDb::create();
     seed(db.path());
     let server = ServerProc::spawn(db.path());
-    let mut client = floe_client::http_json::Client::new(&server.http_json_addr);
+    let mut client = floe_client::http_json::Client::connect(&server.http_json_addr)
+        .await
+        .unwrap();
     assert_full_round_trip(&mut client).await;
 }
 
@@ -517,7 +519,9 @@ async fn http_cbor_backend_full_round_trip() {
     let db = TempDb::create();
     seed(db.path());
     let server = ServerProc::spawn(db.path());
-    let mut client = floe_client::http_cbor::Client::new(&server.http_cbor_addr);
+    let mut client = floe_client::http_cbor::Client::connect(&server.http_cbor_addr)
+        .await
+        .unwrap();
     assert_full_round_trip(&mut client).await;
 }
 
@@ -537,7 +541,9 @@ async fn tx_lookup_agrees_across_schemes() {
     let mut grpc = floe_client::grpc::Client::connect(&format!("http://{}", server.addr))
         .await
         .unwrap();
-    let mut http = floe_client::http_json::Client::new(&server.http_json_addr);
+    let mut http = floe_client::http_json::Client::connect(&server.http_json_addr)
+        .await
+        .unwrap();
 
     let via_grpc = grpc
         .read_tx(ReadTxRequest { hash: TX0 })

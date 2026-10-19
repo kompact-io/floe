@@ -46,7 +46,7 @@ fn metrics_response_proto(dto: MetricsResponse) -> h::MetricsResponse {
         applied_total: dto.applied_total,
         rolled_back_total: dto.rolled_back_total,
         utxos_created_total: dto.utxos_created_total,
-        utxo_count: dto.utxo_count,
+        utxos_spent_total: dto.utxos_spent_total,
         requests: dto
             .requests
             .into_iter()
@@ -79,12 +79,7 @@ impl h::health_service_server::HealthService for Ctx {
         &self,
         _request: Request<()>,
     ) -> Result<Response<h::MetricsResponse>, Status> {
-        let utxo_count = self
-            .utxo_count()
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
-
-        let dto = crate::metrics::snapshot(&self.health, utxo_count, &self.requests);
+        let dto = crate::metrics::snapshot(&self.health, &self.requests);
         Ok(Response::new(metrics_response_proto(dto)))
     }
 }

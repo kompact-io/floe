@@ -65,6 +65,10 @@ impl fmt::Display for Stage {
     }
 }
 
+/// `GetHealth`'s own route -- bodyless GET, unlike every `/query`/
+/// `/submit` RPC's POST (see `query.rs`'s own `*_PATH` constants).
+pub const HEALTH_PATH: &str = "/health";
+
 /// Mirrors `health.RunHealth`: `run` mode's `/health` body -- `stage`
 /// plus chain-freshness. Staleness (how far behind the peer this node
 /// is) is a readiness concern, so it lives here, not in
@@ -193,9 +197,29 @@ pub struct RequestCount {
     pub count: u64,
 }
 
+/// `GetMetrics`'s own route -- same bodyless-GET shape as
+/// `HEALTH_PATH`.
+pub const METRICS_PATH: &str = "/metrics";
+
 /// Mirrors `health.MetricsResponse` -- `/metrics`'s payload: pure
 /// counters/gauges, nothing readiness-shaped (see `RunHealth`'s doc for
 /// why staleness lives there instead).
+///
+/// No live UTxO-set gauge (there used to be one, `utxo_count`): the
+/// only way to answer "how many unspent rows right now" is `SELECT
+/// COUNT(*) FROM utxo WHERE spent_slot IS NULL`, and that condition
+/// matches no index on the table (the existing `spent_slot IS NOT
+/// NULL` partial index is the complement, which doesn't help the
+/// opposite condition) -- so every `GetMetrics` call was a full scan
+/// over every row ever indexed, spent or not, measured live at 1s+ and
+/// climbing as spent rows pile up between `prune` runs. `utxos_created_total`/
+/// `utxos_spent_total` are the replacement: both are in-memory counters
+/// bumped once per applied block (see `floe-server`'s `Health`), so
+/// "created minus spent" gives the same sanity-check shape (is the live
+/// set roughly growing or shrinking) with no query at all -- just not
+/// adjusted for reorgs (a rolled-back block's creates/spends aren't
+/// subtracted back out), same caveat `applied_total`/`rolled_back_total`
+/// already have.
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
@@ -207,8 +231,8 @@ pub struct MetricsResponse {
     pub rolled_back_total: u64,
     #[cfg_attr(feature = "cbor", n(2))]
     pub utxos_created_total: u64,
-    #[cfg_attr(feature = "cbor", n(3))]
-    pub utxo_count: u64,
+    #[cfg_attr(feature = "cbor", n(5))]
+    pub utxos_spent_total: u64,
     #[cfg_attr(feature = "cbor", n(4))]
     pub requests: Vec<RequestCount>,
 }
@@ -217,22 +241,24 @@ impl fmt::Display for MetricsResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "# HELP floe_utxo_count Unspent UTxOs in the index\n\
-             # TYPE floe_utxo_count gauge\n\
-             floe_utxo_count {}\n\
-             # HELP floe_applied_total Blocks applied since process start\n\
+            "# HELP floe_applied_total Blocks applied since process start\n\
              # TYPE floe_applied_total counter\n\
              floe_applied_total {}\n\
              # HELP floe_rolled_back_total Rollback events handled since process start\n\
              # TYPE floe_rolled_back_total counter\n\
              floe_rolled_back_total {}\n\
-             # HELP floe_utxos_created_total UTxOs created since process start (throughput; the\n\
-             # live UTxO set also shrinks as these get spent, see floe_utxo_count)\n\
+             # HELP floe_utxos_created_total UTxOs created since process start\n\
              # TYPE floe_utxos_created_total counter\n\
              floe_utxos_created_total {}\n\
+             # HELP floe_utxos_spent_total UTxOs spent since process start\n\
+             # TYPE floe_utxos_spent_total counter\n\
+             floe_utxos_spent_total {}\n\
              # HELP floe_requests_total Requests received, by scheme and method\n\
              # TYPE floe_requests_total counter\n",
-            self.utxo_count, self.applied_total, self.rolled_back_total, self.utxos_created_total,
+            self.applied_total,
+            self.rolled_back_total,
+            self.utxos_created_total,
+            self.utxos_spent_total,
         )?;
         for r in &self.requests {
             writeln!(

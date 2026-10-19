@@ -9,7 +9,7 @@ use web_sys::{Headers, Request, RequestInit, Response};
 
 use crate::common::Backend;
 use crate::json_wire::decode;
-use floe_dto_http::health::{HealthResponse, MetricsResponse};
+use floe_dto_http::health::{HEALTH_PATH, HealthResponse, METRICS_PATH, MetricsResponse};
 use floe_dto_http::query::{
     ReadDataRequest, ReadDataResponse, ReadTxRequest, ReadTxResponse, ReadUtxosRequest,
     ReadUtxosResponse, SearchUtxosRequest, SearchUtxosResponse,
@@ -138,12 +138,12 @@ impl Backend for Client {
     }
 
     async fn get_health(&mut self) -> Result<HealthResponse> {
-        let (status, body) = self.get("/health", "application/json").await?;
+        let (status, body) = self.get(HEALTH_PATH, "application/json").await?;
         decode(status, &body)
     }
 
     async fn get_metrics(&mut self) -> Result<MetricsResponse> {
-        let (status, body) = self.get("/metrics", "application/json").await?;
+        let (status, body) = self.get(METRICS_PATH, "application/json").await?;
         decode(status, &body)
     }
 }

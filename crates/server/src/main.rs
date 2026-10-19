@@ -9,6 +9,8 @@ use anyhow::{Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 use floe::health::Health;
 use floe::ingest::{seed, store, sync};
+#[cfg(any(feature = "grpc", feature = "http-json", feature = "http-cbor"))]
+use floe::metrics::Scheme;
 #[cfg(feature = "grpc")]
 use floe::serve::scheme::grpc;
 use pallas_network::miniprotocols::Point;
@@ -187,6 +189,7 @@ fn run(args: RunArgs) -> Result<()> {
         if let Some(grpc_addr) = args.grpc {
             #[cfg(feature = "grpc")]
             {
+                requests.register(Scheme::Grpc);
                 let ctx = ctx.clone();
                 tokio::spawn(async move {
                     if let Err(e) = grpc::serve(&grpc_addr, ctx).await {
@@ -213,6 +216,12 @@ fn run(args: RunArgs) -> Result<()> {
 
             #[cfg(any(feature = "http-json", feature = "http-cbor"))]
             {
+                if args.http_json {
+                    requests.register(Scheme::HttpJson);
+                }
+                if args.http_cbor {
+                    requests.register(Scheme::HttpCbor);
+                }
                 let ctx = ctx.clone();
                 let formats = floe::serve::scheme::http::query::HttpFormats {
                     json: args.http_json,

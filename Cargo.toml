@@ -43,6 +43,10 @@ pallas-primitives = "1.4"
 pallas-codec = "1.4"
 proptest = "1"
 rayon = "1"
+# rustls backend, not native-tls -- no OpenSSL/system-TLS dependency,
+# same cert-verification story everywhere this builds. `floe-client`'s
+# only non-wasm32 consumer (`http_json`/`http_cbor`'s transport).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 rusqlite = { version = "0.40", features = ["bundled", "fallible_uint", "load_extension"] }
 schemars = "1.2.3"
 serde = { version = "1", features = ["derive"] }

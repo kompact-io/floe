@@ -13,7 +13,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use floe_dto_http::health::{HealthResponse, MetricsResponse};
+use floe_dto_http::health::{HEALTH_PATH, HealthResponse, METRICS_PATH, MetricsResponse};
 use tracing::info;
 
 use crate::serve::ctx::Ctx;
@@ -30,8 +30,8 @@ pub async fn serve(addr: &str, ctx: Ctx) -> Result<()> {
 
 fn build_router(state: Ctx) -> Router {
     Router::new()
-        .route("/health", get(health_handler))
-        .route("/metrics", get(metrics_handler))
+        .route(HEALTH_PATH, get(health_handler))
+        .route(METRICS_PATH, get(metrics_handler))
         .with_state(state)
 }
 
@@ -96,10 +96,6 @@ where
     }
 }
 
-fn plaintext_error(status: StatusCode, err: impl std::fmt::Display) -> Response {
-    (status, format!("{err}\n")).into_response()
-}
-
 // --- /health ---------------------------------------------------------------
 
 async fn health_handler(State(state): State<Ctx>, headers: HeaderMap) -> Response {
@@ -119,11 +115,6 @@ async fn metrics_handler(State(state): State<Ctx>, headers: HeaderMap) -> Respon
         Err(msg) => return (StatusCode::NOT_ACCEPTABLE, msg).into_response(),
     };
 
-    let utxo_count = match state.utxo_count().await {
-        Ok(n) => n,
-        Err(e) => return plaintext_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
-
-    let dto: MetricsResponse = crate::metrics::snapshot(&state.health, utxo_count, &state.requests);
+    let dto: MetricsResponse = crate::metrics::snapshot(&state.health, &state.requests);
     render(fmt, &dto)
 }

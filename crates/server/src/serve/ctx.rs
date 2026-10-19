@@ -294,12 +294,6 @@ impl Ctx {
         .await
     }
 
-    /// Reporting apparatus only (`/health`/`/metrics`, both schemes).
-    pub async fn utxo_count(&self) -> Result<u64> {
-        self.blocking(|conn| crate::ingest::store::utxo_count(conn))
-            .await
-    }
-
     pub async fn tip(&self) -> Result<Option<(u64, [u8; 32])>> {
         self.blocking(|conn| crate::ingest::store::tip(conn)).await
     }
