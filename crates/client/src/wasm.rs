@@ -91,8 +91,7 @@ pub fn decode_address(address: String) -> Result<String, String> {
             stake_hash: Some(hex::encode(stake.payload().as_hash())),
         },
         _ => {
-            let (pay_hash, stake_hash) =
-                crate::shelley_hashes(&addr).map_err(|e| e.to_string())?;
+            let (pay_hash, stake_hash) = crate::shelley_hashes(&addr).map_err(|e| e.to_string())?;
             DecodedAddress {
                 pay_hash: Some(hex::encode(pay_hash)),
                 stake_hash: stake_hash.map(hex::encode),
