@@ -33,7 +33,7 @@ use minicbor::decode::{Decoder, Error as DecodeError};
 use minicbor::encode::{Encoder, Error as EncodeError, Write as CborWrite};
 #[cfg(feature = "cbor")]
 use minicbor::{Decode, Encode};
-use pallas_addresses::Address as PallasAddress;
+use amaru_kernel::address::Address as KernelAddress;
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;
 #[cfg(feature = "json")]
@@ -89,16 +89,21 @@ pub struct TxoRef {
     pub index: u16,
 }
 
-/// Renders the server-reconstructed `pallas_addresses::Address` as
+/// Renders the server-reconstructed `amaru_kernel::address::Address` as
 /// bech32, where gRPC's own field is raw `bytes`. Encode-only --
 /// `Debug`/`Clone` only, no `Eq`.
 #[derive(Debug, Clone)]
-pub struct Address(pub PallasAddress);
+pub struct Address(pub KernelAddress);
 
 #[cfg(feature = "json")]
 impl Serialize for Address {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&self.0.to_bech32().map_err(serde::ser::Error::custom)?)
+        s.serialize_str(
+            &self
+                .0
+                .to_bech32()
+                .ok_or_else(|| serde::ser::Error::custom("address has no bech32 representation"))?,
+        )
     }
 }
 
@@ -106,7 +111,9 @@ impl Serialize for Address {
 impl<'de> Deserialize<'de> for Address {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let s = String::deserialize(d)?;
-        Ok(Address(s.parse().map_err(serde::de::Error::custom)?))
+        Ok(Address(s.parse().map_err(|_| {
+            serde::de::Error::custom("invalid address")
+        })?))
     }
 }
 
@@ -117,7 +124,10 @@ impl<Ctx> Encode<Ctx> for Address {
         e: &mut Encoder<W>,
         _ctx: &mut Ctx,
     ) -> Result<(), EncodeError<W::Error>> {
-        let s = self.0.to_bech32().map_err(EncodeError::message)?;
+        let s = self
+            .0
+            .to_bech32()
+            .ok_or_else(|| EncodeError::message("address has no bech32 representation"))?;
         e.str(&s)?;
         Ok(())
     }
@@ -126,12 +136,12 @@ impl<Ctx> Encode<Ctx> for Address {
 #[cfg(feature = "cbor")]
 impl<'b, Ctx> Decode<'b, Ctx> for Address {
     fn decode(d: &mut Decoder<'b>, _ctx: &mut Ctx) -> Result<Self, DecodeError> {
-        let addr = d.str()?.parse().map_err(DecodeError::message)?;
+        let addr = d.str()?.parse().map_err(|_| DecodeError::message("invalid address"))?;
         Ok(Address(addr))
     }
 }
 
-/// `pallas_addresses::Address` has no `JsonSchema` impl of its own, so
+/// `amaru_kernel::address::Address` has no `JsonSchema` impl of its own, so
 /// this mirrors the `Serialize` impl above by hand: the wire shape is
 /// a bech32 string, same as `String`'s own schema.
 #[cfg(feature = "schema")]

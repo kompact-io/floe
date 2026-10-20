@@ -6,11 +6,10 @@
 //! Smoke-test tooling only: no RPC corresponds to "build and sign a
 //! tx", so this isn't part of the general client library.
 
-use pallas_addresses::{
-    Address, Network, ShelleyAddress, ShelleyDelegationPart, ShelleyPaymentPart,
-};
-use pallas_crypto::hash::Hasher;
-use pallas_crypto::key::ed25519::SecretKey;
+use amaru_kernel::address::{Address, ShelleyAddress};
+use amaru_kernel::ed25519::{Signer, SigningKey};
+use amaru_kernel::network::Network;
+use amaru_kernel::{Credential, Hasher};
 
 use floe_client::Backend;
 use floe_dto_http::query::SearchUtxosRequest;
@@ -45,9 +44,9 @@ pub enum SelfPayResult {
 /// can poll for that hash independently of calling `run` itself (see
 /// `submit_relay`'s chain).
 pub fn pay_hash(skey: [u8; 32]) -> [u8; 28] {
-    let sk = SecretKey::from(skey);
-    let vk = sk.public_key();
-    let hash = Hasher::<224>::hash(vk.as_ref());
+    let sk = SigningKey::from_bytes(&skey);
+    let vk = sk.verifying_key();
+    let hash = Hasher::<224>::hash(vk.as_bytes());
     hash.as_ref().try_into().expect("blake2b-224 is 28 bytes")
 }
 
@@ -62,16 +61,16 @@ pub async fn run<B: Backend>(
     // smoke-test payment).
     const MIN_BUFFER: u64 = 1_000_000;
 
-    let sk = SecretKey::from(skey);
-    let vk = sk.public_key();
-    let pay_hash = Hasher::<224>::hash(vk.as_ref());
+    let sk = SigningKey::from_bytes(&skey);
+    let vk = sk.verifying_key();
+    let pay_hash = Hasher::<224>::hash(vk.as_bytes());
     // Hardcoded testnet -- the output address, not an input to hash
     // lookup, so it's orthogonal to which scheme/network the server
     // itself runs.
     let address = Address::Shelley(ShelleyAddress::new(
         Network::Testnet,
-        ShelleyPaymentPart::key_hash(pay_hash),
-        ShelleyDelegationPart::Null,
+        Credential::KeyHash(pay_hash),
+        None,
     ));
     let address_bytes = address.to_vec();
     let pay_hash: [u8; 28] = pay_hash
@@ -123,6 +122,7 @@ pub async fn run<B: Backend>(
     // hashing/prefix), per Cardano's own witness convention.
     let tx_id = Hasher::<256>::hash(&body);
     let signature = sk.sign(tx_id.as_ref());
+    let signature = signature.to_bytes();
 
     // transaction_witness_set = {0: [[vkey, signature]]}
     let mut witness_set = Vec::new();
@@ -131,8 +131,8 @@ pub async fn run<B: Backend>(
         .and_then(|e| e.u8(0))
         .and_then(|e| e.array(1))
         .and_then(|e| e.array(2))
-        .and_then(|e| e.bytes(vk.as_ref()))
-        .and_then(|e| e.bytes(signature.as_ref()))
+        .and_then(|e| e.bytes(vk.as_bytes()))
+        .and_then(|e| e.bytes(&signature))
         .map_err(|e| anyhow::anyhow!("cbor encode: {e}"))?;
 
     // transaction = [transaction_body, transaction_witness_set, true, null]

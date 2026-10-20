@@ -8,11 +8,14 @@
 use std::collections::HashSet;
 use std::fs;
 
+use amaru_kernel::cardano::era_name::EraName;
+use amaru_kernel::cardano::header::Header;
+use amaru_kernel::cardano::memoized::MemoizedDatum;
+use amaru_kernel::cardano::network_block::NetworkBlock;
+use amaru_kernel::{IsHeader, RawBlock};
 use anyhow::{Result, anyhow};
 use pallas_network::facades::PeerClient;
 use pallas_network::miniprotocols::{Point, chainsync::NextResponse};
-use pallas_primitives::conway::DatumOption;
-use pallas_traverse::{MultiEraBlock, MultiEraHeader};
 
 #[derive(Default)]
 struct Found {
@@ -100,9 +103,13 @@ async fn main() -> Result<()> {
                     break 'reconnect;
                 }
                 NextResponse::RollForward(h, _) => {
-                    let hdr =
-                        MultiEraHeader::decode(h.variant, h.byron_prefix.map(|p| p.0), &h.cbor)?;
-                    let pt = Point::Specific(hdr.slot(), hdr.hash().to_vec());
+                    if EraName::from_header_variant(h.variant)? == EraName::Byron {
+                        return Err(anyhow!("Byron-era headers are not supported"));
+                    }
+                    let hdr: Header = amaru_kernel::cbor::decode(&h.cbor)?;
+                    let slot = hdr.slot().as_u64();
+                    let hash: [u8; 32] = *hdr.hash();
+                    let pt = Point::Specific(slot, hash.to_vec());
                     let bytes = match peer.blockfetch().fetch_single(pt.clone()).await {
                         Ok(v) => v,
                         Err(e) if retries < 10 => {
@@ -114,12 +121,10 @@ async fn main() -> Result<()> {
                         }
                         Err(e) => return Err(e.into()),
                     };
-                    let blk = MultiEraBlock::decode(&bytes)?;
+                    let network_block = NetworkBlock::try_from(RawBlock::from(bytes.as_slice()))?;
+                    let blk = network_block.decode_block()?;
                     point = pt;
 
-                    let hash32 = |h: &pallas_crypto::hash::Hash<32>| -> [u8; 32] {
-                        h.as_ref().try_into().unwrap()
-                    };
                     let mut created_here: HashSet<([u8; 32], u64)> = HashSet::new();
                     let mut spent_here: Vec<([u8; 32], u64)> = Vec::new();
                     let mut has_invalid = false;
@@ -128,23 +133,43 @@ async fn main() -> Result<()> {
                     let mut has_witness_datum = false;
                     let mut has_ref_script = false;
 
-                    for tx in blk.txs() {
-                        if !tx.is_valid() {
-                            has_invalid = has_invalid || tx.collateral_return().is_some();
-                        } else if !tx.plutus_data().is_empty() {
+                    for (_ix, tx) in &blk {
+                        let tx_hash: [u8; 32] = *tx.body.id();
+                        if !tx.is_expected_valid {
+                            has_invalid = has_invalid || tx.body.collateral_return.is_some();
+                        } else if tx.witnesses.plutus_data.is_some() {
                             has_witness_datum = true;
                         }
-                        for i in tx.consumes() {
-                            spent_here.push((hash32(i.hash()), i.index()));
+                        let consumed = if tx.is_expected_valid {
+                            tx.body.inputs.iter().collect::<Vec<_>>()
+                        } else {
+                            tx.body
+                                .collateral
+                                .as_ref()
+                                .map(|c| c.iter().collect())
+                                .unwrap_or_default()
+                        };
+                        for i in consumed {
+                            spent_here.push((*i.transaction_id, i.index as u64));
                         }
-                        for (ix, o) in tx.produces() {
-                            created_here.insert((hash32(&tx.hash()), ix as u64));
-                            match o.datum() {
-                                Some(DatumOption::Data(_)) => has_inline = true,
-                                Some(DatumOption::Hash(_)) => has_hash_datum = true,
-                                None => {}
+                        let produced: Vec<(u64, &amaru_kernel::cardano::memoized::MemoizedTransactionOutput)> =
+                            if tx.is_expected_valid {
+                                tx.body.outputs.iter().enumerate().map(|(i, o)| (i as u64, o)).collect()
+                            } else {
+                                tx.body
+                                    .collateral_return
+                                    .as_deref()
+                                    .map(|o| vec![(tx.body.outputs.len() as u64, o)])
+                                    .unwrap_or_default()
+                            };
+                        for (ix, o) in produced {
+                            created_here.insert((tx_hash, ix));
+                            match &o.datum {
+                                MemoizedDatum::Inline(_) => has_inline = true,
+                                MemoizedDatum::Hash(_) => has_hash_datum = true,
+                                MemoizedDatum::None => {}
                             }
-                            if o.script_ref().is_some() {
+                            if o.script.is_some() {
                                 has_ref_script = true;
                             }
                         }
@@ -158,9 +183,9 @@ async fn main() -> Result<()> {
                             fs::write(&path, hex::encode(&bytes))?;
                             println!(
                                 "block {n} slot={} block_no={} -> {path} ({} txs)",
-                                blk.slot(),
-                                blk.number(),
-                                blk.txs().len()
+                                slot,
+                                blk.header.body().block_number,
+                                blk.transaction_bodies.len()
                             );
                         }
                         Ok(())

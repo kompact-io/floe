@@ -19,17 +19,17 @@ pub fn parse_hex<const N: usize>(s: &str) -> Result<[u8; N], String> {
 
 /// `--network`'s value: parsed case-insensitively, with the three
 /// non-mainnet CIP-5-visible names (`testnet`/`preprod`/`preview`) all
-/// mapping to `pallas_addresses::Network::Testnet` -- that's the only
-/// distinction the bech32 HRP (and this client) can see.
+/// mapping to `amaru_kernel::network::Network::Testnet` -- that's the
+/// only distinction the bech32 HRP (and this client) can see.
 #[derive(Debug, Clone, Copy)]
-pub struct NetworkArg(pub pallas_addresses::Network);
+pub struct NetworkArg(pub amaru_kernel::network::Network);
 
 impl std::str::FromStr for NetworkArg {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, String> {
         match s.to_ascii_lowercase().as_str() {
-            "mainnet" => Ok(Self(pallas_addresses::Network::Mainnet)),
-            "testnet" | "preprod" | "preview" => Ok(Self(pallas_addresses::Network::Testnet)),
+            "mainnet" => Ok(Self(amaru_kernel::network::Network::Mainnet)),
+            "testnet" | "preprod" | "preview" => Ok(Self(amaru_kernel::network::Network::Testnet)),
             other => Err(format!(
                 "unknown network {other:?} (expected mainnet/testnet/preprod/preview)"
             )),
@@ -39,22 +39,21 @@ impl std::str::FromStr for NetworkArg {
 
 /// Decomposes a `Shelley` address into its parts.
 pub fn shelley_hashes(
-    addr: &pallas_addresses::Address,
+    addr: &amaru_kernel::address::Address,
 ) -> anyhow::Result<(Hash28, Option<Hash28>)> {
-    use pallas_addresses::{Address, ShelleyDelegationPart, ShelleyPaymentPart};
+    use amaru_kernel::address::{Address, StakeReference};
+    use amaru_kernel::AsHash;
 
     let Address::Shelley(s) = addr else {
         anyhow::bail!("address has no payment hash floe could have indexed (Byron/Stake)");
     };
-    let hash28 = |h: &pallas_crypto::hash::Hash<28>| -> Hash28 {
+    let hash28 = |h: amaru_kernel::Hash<28>| -> Hash28 {
         h.as_ref().try_into().expect("Hash<28> is 28 bytes")
     };
-    let pay_hash = match s.payment() {
-        ShelleyPaymentPart::Key(h) | ShelleyPaymentPart::Script(h) => hash28(h),
-    };
+    let pay_hash = hash28(s.payment().as_hash());
     let stake_hash = match s.delegation() {
-        ShelleyDelegationPart::Key(h) | ShelleyDelegationPart::Script(h) => Some(hash28(h)),
-        ShelleyDelegationPart::Pointer(_) | ShelleyDelegationPart::Null => None,
+        Some(StakeReference::Credential(c)) => Some(hash28(c.as_hash())),
+        Some(StakeReference::Pointer(_)) | None => None,
     };
     Ok((pay_hash, stake_hash))
 }

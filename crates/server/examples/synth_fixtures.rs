@@ -2,168 +2,208 @@
 //! fixture cases that are rare/unreliable to find by scanning the live chain:
 //! an invalid (collateral-only) tx, a hash-kind datum, and a witness-set datum.
 //!
-//! pallas's `is_valid()` / `.txs()` derive validity purely from the block-level
-//! `invalid_transactions` index list (see pallas-primitives conway::Block) — it
-//! never executes Plutus or checks signatures — so a syntactically valid block
-//! with dummy crypto fields is sufficient; no real wallet, script, or chain
-//! submission is needed.
+//! amaru-kernel's own validity derivation (`Transaction::is_expected_valid`,
+//! `Block`'s `invalid_transactions` index list) never executes Plutus or
+//! checks signatures -- a syntactically valid block with dummy crypto fields
+//! is sufficient; no real wallet, script, or chain submission is needed.
+//!
+//! `amaru_kernel::cardano::transaction_body::TransactionBody` and
+//! `WitnessSet`'s `plutus_data` (`PlutusDataSet`) both keep their
+//! original-bytes bookkeeping fields private -- there's no public
+//! struct-literal constructor for either from outside the crate. Both are
+//! built here by hand-writing their CBOR (the exact field-number maps their
+//! own `Decode` impls expect -- see `TransactionBody::decode`/
+//! `WitnessSet::decode` in the amaru-kernel source) and decoding that back
+//! through amaru-kernel's own `Decode` impl, rather than constructing the
+//! Rust value directly.
 //!
 //! usage: cargo run --release --example synth_fixtures
 //! writes: tests/data/fixture_synthetic.block.hex
 
-use std::collections::BTreeMap;
+use amaru_kernel::address::Address;
+use amaru_kernel::cardano::block::Block;
+use amaru_kernel::cardano::era_name::EraName;
+use amaru_kernel::cardano::fixed_bytes::FixedBytes;
+use amaru_kernel::cardano::header::{Header, KesSignature};
+use amaru_kernel::cardano::header_body::HeaderBody;
+use amaru_kernel::MemoizedPlutusData;
+use amaru_kernel::cardano::memoized::{MemoizedDatum, MemoizedTransactionOutput};
+use amaru_kernel::cardano::operational_cert::OperationalCert;
+use amaru_kernel::cardano::plutus_data::{BigInt, PlutusData};
+use amaru_kernel::cardano::protocol_version::ProtocolVersion;
+use amaru_kernel::cardano::transaction::Transaction;
+use amaru_kernel::cardano::transaction_body::TransactionBody;
+use amaru_kernel::cardano::transaction_input::TransactionInput;
+use amaru_kernel::cardano::value::Value;
+use amaru_kernel::cardano::vrf_cert::{VRF_PROOF, VrfCert};
+use amaru_kernel::cardano::witness_set::WitnessSet;
+use amaru_kernel::{Bytes, Ed25519Signature, Hash, Int, KesPeriod, NonEmptyVec, VerificationKey, cbor};
 
-use pallas_codec::minicbor;
-use pallas_codec::utils::{Bytes, Int, KeepRaw, NonEmptySet, Set};
-use pallas_crypto::hash::Hash;
-use pallas_primitives::conway::{
-    Block, DatumOption, Header, HeaderBody, OperationalCert, PostAlonzoTransactionOutput,
-    TransactionBody, TransactionOutput, Value, WitnessSet,
-};
-use pallas_primitives::{BigInt, PlutusData, TransactionInput, VrfCert};
-use pallas_traverse::MultiEraBlock;
-
-fn addr(tail: u8) -> Bytes {
+fn address(tail: u8) -> Address {
     // Enterprise key address (type id 0b0110), testnet network id 0: header
     // byte 0x60 + 28-byte payment key hash. Decodes fine; the hash value and
     // network are arbitrary for decode.rs's purposes.
-    let mut a = vec![0x60u8];
-    a.extend(std::iter::repeat_n(tail, 28));
-    Bytes::from(a)
+    let mut bytes = vec![0x60u8];
+    bytes.extend(std::iter::repeat_n(tail, 28));
+    Address::from_bytes(&bytes).expect("well-formed enterprise-key address")
 }
 
-fn plain_output(tail: u8, coin: u64) -> TransactionOutput<'static> {
-    TransactionOutput::PostAlonzo(KeepRaw::from(PostAlonzoTransactionOutput {
-        address: addr(tail),
-        value: Value::Coin(coin),
-        datum_option: None,
-        script_ref: None,
-    }))
+fn plain_output(tail: u8, coin: u64) -> MemoizedTransactionOutput {
+    MemoizedTransactionOutput::new(address(tail), Value::Coin(coin), MemoizedDatum::None, None)
 }
 
-fn input(tail: u8, ix: u64) -> TransactionInput {
+fn input(tail: u8, ix: u16) -> TransactionInput {
     TransactionInput {
         transaction_id: Hash::from([tail; 32]),
         index: ix,
     }
 }
 
-fn witness_with_plutus_data(tag: i64) -> WitnessSet<'static> {
-    let datum = PlutusData::BigInt(BigInt::Int(Int::from(tag)));
-    WitnessSet {
-        vkeywitness: None,
-        native_script: None,
-        bootstrap_witness: None,
-        plutus_v1_script: None,
-        plutus_data: Some(KeepRaw::from(
-            NonEmptySet::try_from(vec![KeepRaw::from(datum)]).unwrap(),
-        )),
-        redeemer: None,
-        plutus_v2_script: None,
-        plutus_v3_script: None,
+/// Hand-writes a `WitnessSet` map carrying a single floating `plutus_data`
+/// entry (map key 4) -- see this module's own doc for why `PlutusDataSet`
+/// can't be built directly.
+fn witness_set_with_plutus_data(tag: i64) -> WitnessSet {
+    let datum = PlutusData::int(BigInt::Int(Int::from(tag)));
+    let datums: NonEmptyVec<MemoizedPlutusData> = NonEmptyVec::singleton(MemoizedPlutusData::new(datum));
+
+    let mut buf = Vec::new();
+    let mut ctx = ();
+    {
+        let mut e = cbor::Encoder::new(&mut buf);
+        e.begin_map().unwrap();
+        e.u8(4).unwrap().encode_with(&datums, &mut ctx).unwrap();
+        e.end().unwrap();
     }
+    cbor::decode(&buf).expect("valid witness set cbor")
+}
+
+/// Hand-writes a `TransactionBody` map with only the fields this fixture
+/// needs set (required fields 0/1/2, plus collateral fields 13/16/17 when
+/// given) -- see this module's own doc for why `TransactionBody` can't be
+/// built directly.
+fn transaction_body(
+    inputs: Vec<TransactionInput>,
+    outputs: Vec<MemoizedTransactionOutput>,
+    fee: u64,
+    collateral: Option<Vec<TransactionInput>>,
+    collateral_return: Option<MemoizedTransactionOutput>,
+    total_collateral: Option<u64>,
+) -> TransactionBody {
+    let inputs: amaru_kernel::Set<TransactionInput> = inputs.into_iter().collect();
+
+    let mut buf = Vec::new();
+    let mut ctx = ();
+    {
+        let mut e = cbor::Encoder::new(&mut buf);
+        e.begin_map().unwrap();
+        e.u8(0).unwrap().encode_with(&inputs, &mut ctx).unwrap();
+        e.u8(1).unwrap().encode_with(&outputs, &mut ctx).unwrap();
+        e.u8(2).unwrap().encode_with(fee, &mut ctx).unwrap();
+        if let Some(collateral) = &collateral {
+            let collateral: amaru_kernel::VecSet<TransactionInput> =
+                collateral.clone().try_into().expect("collateral has no duplicates");
+            e.u8(13).unwrap().encode_with(&collateral, &mut ctx).unwrap();
+        }
+        if let Some(collateral_return) = &collateral_return {
+            e.u8(16).unwrap().encode_with(collateral_return, &mut ctx).unwrap();
+        }
+        if let Some(total_collateral) = total_collateral {
+            e.u8(17).unwrap().encode_with(total_collateral, &mut ctx).unwrap();
+        }
+        e.end().unwrap();
+    }
+    cbor::decode(&buf).expect("valid transaction body cbor")
 }
 
 fn main() -> anyhow::Result<()> {
     // tx0: valid. Output 0 carries a hash-kind datum (DatumOption::Hash);
     // the witness set carries a floating plutus_data (the normal case per
     // PLAN.md: "a hash datum's preimage usually appears in the spending tx").
-    let hash_datum_output =
-        TransactionOutput::PostAlonzo(KeepRaw::from(PostAlonzoTransactionOutput {
-            address: addr(0x11),
-            value: Value::Coin(1_500_000),
-            datum_option: Some(KeepRaw::from(DatumOption::Hash(Hash::from([0xABu8; 32])))),
-            script_ref: None,
-        }));
-    let body0 = TransactionBody {
-        inputs: Set::from(vec![input(0x01, 0)]),
-        outputs: vec![hash_datum_output, plain_output(0x12, 500_000)],
-        fee: 200_000,
-        ttl: None,
-        certificates: None,
-        withdrawals: None,
-        auxiliary_data_hash: None,
-        validity_interval_start: None,
-        mint: None,
-        script_data_hash: None,
-        collateral: None,
-        required_signers: None,
-        network_id: None,
-        collateral_return: None,
-        total_collateral: None,
-        reference_inputs: None,
-        voting_procedures: None,
-        proposal_procedures: None,
-        treasury_value: None,
-        donation: None,
+    let hash_datum_output = MemoizedTransactionOutput::new(
+        address(0x11),
+        Value::Coin(1_500_000),
+        MemoizedDatum::from(Hash::<32>::from([0xABu8; 32])),
+        None,
+    );
+    let body0 = transaction_body(
+        vec![input(0x01, 0)],
+        vec![hash_datum_output, plain_output(0x12, 500_000)],
+        200_000,
+        None,
+        None,
+        None,
+    );
+    let wit0 = witness_set_with_plutus_data(1);
+    let tx0 = Transaction {
+        body: body0,
+        witnesses: cbor::WithSize::new(wit0.clone(), cbor::to_cbor_with(&wit0, &mut ()).len()),
+        is_expected_valid: true,
+        auxiliary_data: None,
     };
-    let wit0 = witness_with_plutus_data(1);
 
     // tx1: invalid (listed in the block's invalid_transactions). Only the
     // collateral input and collateral_return output are meant to be ingested;
     // its regular inputs/outputs and witness-set datum must be skipped
     // (PLAN.md ingest rule 4).
-    let body1 = TransactionBody {
-        inputs: Set::from(vec![input(0x02, 0)]),
-        outputs: vec![plain_output(0x13, 999_000_000)],
-        fee: 300_000,
-        ttl: None,
-        certificates: None,
-        withdrawals: None,
-        auxiliary_data_hash: None,
-        validity_interval_start: None,
-        mint: None,
-        script_data_hash: None,
-        collateral: Some(NonEmptySet::try_from(vec![input(0x03, 0)]).unwrap()),
-        required_signers: None,
-        network_id: None,
-        collateral_return: Some(plain_output(0x14, 100_000)),
-        total_collateral: Some(300_000),
-        reference_inputs: None,
-        voting_procedures: None,
-        proposal_procedures: None,
-        treasury_value: None,
-        donation: None,
+    let body1 = transaction_body(
+        vec![input(0x02, 0)],
+        vec![plain_output(0x13, 999_000_000)],
+        300_000,
+        Some(vec![input(0x03, 0)]),
+        Some(plain_output(0x14, 100_000)),
+        Some(300_000),
+    );
+    let wit1 = witness_set_with_plutus_data(2);
+    let tx1 = Transaction {
+        body: body1,
+        witnesses: cbor::WithSize::new(wit1.clone(), cbor::to_cbor_with(&wit1, &mut ()).len()),
+        is_expected_valid: false,
+        auxiliary_data: None,
     };
-    let wit1 = witness_with_plutus_data(2);
 
-    let header = Header {
-        header_body: HeaderBody {
-            block_number: 1,
-            slot: 1,
-            prev_hash: None,
-            issuer_vkey: Bytes::from(vec![0u8; 32]),
-            vrf_vkey: Bytes::from(vec![0u8; 32]),
-            vrf_result: VrfCert(Bytes::from(vec![0u8; 80]), Bytes::from(vec![0u8; 80])),
-            block_body_size: 0,
-            block_body_hash: Hash::from([0u8; 32]),
-            operational_cert: OperationalCert {
-                operational_cert_hot_vkey: Bytes::from(vec![0u8; 32]),
-                operational_cert_sequence_number: 0,
-                operational_cert_kes_period: 0,
-                operational_cert_sigma: Bytes::from(vec![0u8; 64]),
-            },
-            protocol_version: (10, 0),
+    let (block_body_hash, block_body_size) = Block::body_commitment(&[tx0.clone(), tx1.clone()])?;
+
+    let header_body = HeaderBody {
+        block_number: 1,
+        slot: 1,
+        prev_hash: None,
+        issuer_verification_key: VerificationKey::zeroes(),
+        vrf_verification_key: VerificationKey::zeroes(),
+        vrf_result: VrfCert {
+            output: Bytes::default(),
+            proof: FixedBytes::<VRF_PROOF>::zeroes(),
         },
-        body_signature: Bytes::from(vec![0u8; 64]),
+        block_body_size,
+        block_body_hash,
+        operational_cert: OperationalCert {
+            operational_cert_hot_verification_key: VerificationKey::zeroes(),
+            operational_cert_sequence_number: 0,
+            operational_cert_kes_period: KesPeriod::from(0),
+            operational_cert_sigma: Ed25519Signature::zeroes(),
+        },
+        protocol_version: ProtocolVersion::new(10, 0),
     };
+    let header = Header::new(header_body, KesSignature::zeroes());
 
-    let block = Block {
-        header: KeepRaw::from(header),
-        transaction_bodies: vec![KeepRaw::from(body0), KeepRaw::from(body1)],
-        transaction_witness_sets: vec![KeepRaw::from(wit0), KeepRaw::from(wit1)],
-        auxiliary_data_set: BTreeMap::new(),
-        invalid_transactions: Some(vec![1]),
-    };
+    let block = Block::from_transactions(header, vec![tx0, tx1])?;
 
-    let bytes = minicbor::to_vec(&(7u8, block))?;
+    // Same wire shape blockfetch delivers: `[era_tag, block_term]` (see
+    // `amaru_kernel::cardano::network_block::NetworkBlock`), era tag hardcoded
+    // to Conway regardless of the dummy slot (same as the old pallas-era
+    // tuple `(7u8, block)` this replaces).
+    let bytes = cbor::to_cbor(&(EraName::Conway, block));
 
     // Round-trip through the real decode path, exactly like a block fetched
-    // from the wire, so every KeepRaw field's raw-byte tracking is genuine.
-    let decoded = MultiEraBlock::decode(&bytes)?;
-    assert_eq!(decoded.txs().len(), 2);
-    assert!(decoded.txs()[0].is_valid());
-    assert!(!decoded.txs()[1].is_valid());
+    // from the wire, so this is genuinely well-formed, not just assumed so.
+    let network_block = amaru_kernel::cardano::network_block::NetworkBlock::try_from(
+        amaru_kernel::RawBlock::from(bytes.as_slice()),
+    )?;
+    let decoded = network_block.decode_block()?;
+    assert_eq!(decoded.transaction_bodies.len(), 2);
+    let tx_count = (&decoded).into_iter().count();
+    assert_eq!(tx_count, 2);
+    let valid_flags: Vec<bool> = (&decoded).into_iter().map(|(_, tx)| tx.is_expected_valid).collect();
+    assert_eq!(valid_flags, vec![true, false]);
 
     std::fs::create_dir_all("tests/data")?;
     std::fs::write(

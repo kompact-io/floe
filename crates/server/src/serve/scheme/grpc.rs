@@ -25,9 +25,10 @@
 pub mod health;
 pub mod submit;
 
+use amaru_kernel::Hash;
+use amaru_kernel::cardano::multiasset::Multiasset;
+use amaru_kernel::cardano::positive_coin::PositiveCoin;
 use anyhow::Result;
-use pallas_codec::minicbor;
-use pallas_primitives::conway::NativeScript as PallasNativeScript;
 use tonic::{Request, Response, Status, transport::Server};
 use tracing::info;
 
@@ -127,63 +128,107 @@ fn big_int_u64(v: u64) -> c::BigInt {
     }
 }
 
-/// Decodes the raw CBOR multiasset map floe stores (`minicbor::to_vec`
-/// of a `pallas_primitives::conway::Multiasset<PositiveCoin>`, see
+/// Decodes the raw CBOR multiasset map floe stores (`amaru_kernel::to_cbor`
+/// of an `amaru_kernel::cardano::multiasset::Multiasset<PositiveCoin>`, see
 /// `decode.rs`'s `decode_output`) back into UTxORPC's structured
-/// `Multiasset` shape. Round-trips through the same pallas type that
+/// `Multiasset` shape. Round-trips through the same amaru-kernel type that
 /// produced the bytes, not a hand-rolled parser.
 fn decode_assets(bytes: &[u8]) -> Result<Vec<c::Multiasset>> {
-    let ma: pallas_primitives::conway::Multiasset<pallas_codec::utils::PositiveCoin> =
-        minicbor::decode(bytes)?;
+    let ma: Multiasset<PositiveCoin> = amaru_kernel::cbor::decode(bytes)?;
     Ok(ma
-        .into_iter()
+        .iter()
         .map(|(policy, assets)| c::Multiasset {
             policy_id: policy.to_vec(),
             assets: assets
-                .into_iter()
+                .iter()
                 .map(|(name, qty)| c::Asset {
                     name: name.to_vec(),
-                    quantity: Some(big_int_u64(u64::from(qty))),
+                    quantity: Some(big_int_u64(u64::from(*qty))),
                 })
                 .collect(),
         })
         .collect())
 }
 
-/// Re-decodes a reference script's stored raw CBOR back into
-/// UTxORPC's structured `NativeScript` shape, for the `Native` lang
-/// case -- the bytes are exactly what `ns.raw_cbor()` wrote at decode
-/// time (see `decode.rs`'s `decode_output`), so decoding them with
-/// pallas's own `NativeScript` type is a round-trip, not a parser
-/// floe has to maintain itself.
-/// Takes `&PallasNativeScript`, not by value: pallas's `NativeScript`
-/// implements `Drop` (an internal caching detail), which forbids
-/// moving its enum fields out by pattern match -- only borrowing them.
-fn native_script(ns: &PallasNativeScript) -> c::NativeScript {
+/// `amaru_kernel::NativeScript` keeps its decoded tree private (only
+/// `.original_bytes()`/`.eval()` are exposed, no way to walk its
+/// structure from outside the crate), unlike pallas's own public
+/// `NativeScript` enum -- so this walks the raw stored CBOR bytes by
+/// hand instead, mirroring the (stable, protocol-level) CDDL tag layout
+/// amaru's own private `NativeScriptTree` uses: 0 verification_key,
+/// 1 all, 2 any, 3 n_of_k, 4 invalid_before, 5 invalid_hereafter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RawNativeScript {
+    VerificationKey(Hash<28>),
+    All(Vec<RawNativeScript>),
+    Any(Vec<RawNativeScript>),
+    AtLeast(i64, Vec<RawNativeScript>),
+    InvalidBefore(u64),
+    InvalidAfter(u64),
+}
+
+impl<'b, C: amaru_kernel::cbor::HasProtocolVersion> amaru_kernel::cbor::Decode<'b, C> for RawNativeScript {
+    fn decode(
+        d: &mut amaru_kernel::cbor::Decoder<'b>,
+        ctx: &mut C,
+    ) -> Result<Self, amaru_kernel::cbor::decode::Error> {
+        amaru_kernel::cbor::heterogeneous_array(d, |d, assert_len| match d.u32()? {
+            0 => {
+                assert_len(2)?;
+                Ok(Self::VerificationKey(d.decode_with(ctx)?))
+            }
+            1 => {
+                assert_len(2)?;
+                Ok(Self::All(d.decode_with(ctx)?))
+            }
+            2 => {
+                assert_len(2)?;
+                Ok(Self::Any(d.decode_with(ctx)?))
+            }
+            3 => {
+                assert_len(3)?;
+                Ok(Self::AtLeast(d.decode_with(ctx)?, d.decode_with(ctx)?))
+            }
+            4 => {
+                assert_len(2)?;
+                Ok(Self::InvalidBefore(d.decode_with(ctx)?))
+            }
+            5 => {
+                assert_len(2)?;
+                Ok(Self::InvalidAfter(d.decode_with(ctx)?))
+            }
+            _ => Err(amaru_kernel::cbor::decode::Error::message(
+                "unexpected variant id for native script",
+            )),
+        })
+    }
+}
+
+fn native_script(ns: &RawNativeScript) -> c::NativeScript {
     let variant = match ns {
-        PallasNativeScript::ScriptPubkey(h) => {
+        RawNativeScript::VerificationKey(h) => {
             c::native_script::NativeScript::ScriptPubkeyHash(h.to_vec())
         }
-        PallasNativeScript::ScriptAll(items) => {
+        RawNativeScript::All(items) => {
             c::native_script::NativeScript::ScriptAll(c::NativeScriptList {
                 items: items.iter().map(native_script).collect(),
             })
         }
-        PallasNativeScript::ScriptAny(items) => {
+        RawNativeScript::Any(items) => {
             c::native_script::NativeScript::ScriptAny(c::NativeScriptList {
                 items: items.iter().map(native_script).collect(),
             })
         }
-        PallasNativeScript::ScriptNOfK(k, items) => {
+        RawNativeScript::AtLeast(k, items) => {
             c::native_script::NativeScript::ScriptNOfK(c::ScriptNOfK {
                 k: *k as u32,
                 scripts: items.iter().map(native_script).collect(),
             })
         }
-        PallasNativeScript::InvalidBefore(slot) => {
+        RawNativeScript::InvalidBefore(slot) => {
             c::native_script::NativeScript::InvalidBefore(*slot)
         }
-        PallasNativeScript::InvalidHereafter(slot) => {
+        RawNativeScript::InvalidAfter(slot) => {
             c::native_script::NativeScript::InvalidHereafter(*slot)
         }
     };
@@ -200,7 +245,7 @@ fn native_script(ns: &PallasNativeScript) -> c::NativeScript {
 fn script(s: ResolvedScript) -> Result<c::Script> {
     let variant = match s.lang {
         crate::ingest::decode::ScriptLang::Native => {
-            let ns: PallasNativeScript = minicbor::decode(&s.cbor)?;
+            let ns: RawNativeScript = amaru_kernel::cbor::decode(&s.cbor)?;
             c::script::Script::Native(native_script(&ns))
         }
         crate::ingest::decode::ScriptLang::PlutusV1 => c::script::Script::PlutusV1(s.cbor),

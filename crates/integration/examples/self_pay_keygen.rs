@@ -4,28 +4,30 @@
 //! the preprod faucet; it's printed for that step only, never read
 //! back.
 
-use pallas_addresses::{
-    Address, Network, ShelleyAddress, ShelleyDelegationPart, ShelleyPaymentPart,
-};
-use pallas_crypto::hash::Hasher;
-use pallas_crypto::key::ed25519::SecretKey;
+use amaru_kernel::address::{Address, ShelleyAddress};
+use amaru_kernel::ed25519::SigningKey;
+use amaru_kernel::network::Network;
+use amaru_kernel::{Credential, Hasher};
 
 fn main() {
-    let sk = SecretKey::new(rand::rng());
-    let vk = sk.public_key();
-    let pay_hash = Hasher::<224>::hash(vk.as_ref());
+    use rand::RngExt;
+    let mut seed = [0u8; 32];
+    rand::rng().fill(&mut seed);
+    let sk = SigningKey::from_bytes(&seed);
+    let vk = sk.verifying_key();
+    let pay_hash = Hasher::<224>::hash(vk.as_bytes());
 
     let address = Address::Shelley(ShelleyAddress::new(
         Network::Testnet,
-        ShelleyPaymentPart::key_hash(pay_hash),
-        ShelleyDelegationPart::Null,
+        Credential::KeyHash(pay_hash),
+        None,
     ))
     .to_bech32()
     .expect("a freshly-built Shelley address always encodes");
 
-    // SAFETY: printed once, straight into a gitignored dotenv file --
-    // not retained or logged anywhere else.
-    let sk_bytes = unsafe { SecretKey::leak_into_bytes(sk) };
+    // Printed once, straight into a gitignored dotenv file -- not
+    // retained or logged anywhere else.
+    let sk_bytes = sk.to_bytes();
 
     let skey_hex = hex::encode(sk_bytes);
     println!("FLOE_TEST_SKEY={skey_hex}");

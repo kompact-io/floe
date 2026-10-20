@@ -36,11 +36,7 @@ floe-server = { path = "crates/server" }
 http = "1"
 minicbor = { version = "2.3.0", features = ["derive", "alloc", "half"] }
 pallas-network = "1.4"
-pallas-traverse = "1.4"
-pallas-crypto = "1.4"
-pallas-addresses = "1.4"
-pallas-primitives = "1.4"
-pallas-codec = "1.4"
+amaru-kernel = { git = "https://github.com/kompact-io/amaru", rev = "4774c0ef03da598a8b2bf9b89299135080f7c3fe" }
 proptest = "1"
 rayon = "1"
 # rustls backend, not native-tls -- no OpenSSL/system-TLS dependency,

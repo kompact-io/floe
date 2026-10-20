@@ -748,7 +748,7 @@ mod tests {
         let mut conn = fresh_db();
 
         let inline_cbor = vec![0xAAu8; 3];
-        let inline_hash: [u8; 32] = pallas_crypto::hash::Hasher::<256>::hash(&inline_cbor)
+        let inline_hash: [u8; 32] = amaru_kernel::Hasher::<256>::hash(&inline_cbor)
             .as_ref()
             .try_into()
             .unwrap();
@@ -769,7 +769,7 @@ mod tests {
 
         let script_cbor = vec![0xEEu8; 4];
         let script_hash: [u8; 28] =
-            pallas_crypto::hash::Hasher::<224>::hash_tagged(&script_cbor, 0)
+            amaru_kernel::Hasher::<224>::hash_tagged(&script_cbor, 0)
                 .as_ref()
                 .try_into()
                 .unwrap();

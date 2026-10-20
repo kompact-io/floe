@@ -3,10 +3,14 @@
 
 use std::sync::Arc;
 
+use amaru_kernel::cardano::block::Block;
+use amaru_kernel::cardano::era_name::EraName;
+use amaru_kernel::cardano::header::Header;
+use amaru_kernel::cardano::network_block::NetworkBlock;
+use amaru_kernel::{IsHeader, RawBlock};
 use anyhow::{Result, anyhow, bail};
 use pallas_network::facades::PeerClient;
 use pallas_network::miniprotocols::{Point, chainsync::NextResponse};
-use pallas_traverse::{MultiEraBlock, MultiEraHeader};
 use rusqlite::Connection;
 use tokio::sync::mpsc;
 use tracing::{info, instrument, warn};
@@ -90,24 +94,41 @@ struct PendingHeader {
     block_no: u64,
 }
 
+/// `h.variant`/`h.cbor` are pallas_network's own chain-sync `HeaderContent`
+/// shape -- kept at this one boundary since `pallas_network` stays floe's
+/// wire transport (see the migration plan). `h.cbor` is already just the
+/// header's own `[body, signature]` term (chain-sync's own envelope, if
+/// any, is stripped by `pallas_network` itself before this), so it decodes
+/// directly as an `amaru_kernel::Header` -- same shape Shelley through
+/// Conway, no era-specific branching needed (floe doesn't support Byron;
+/// `h.byron_prefix` is only ever set for a Byron header and is otherwise
+/// unused here).
 fn decode_header(
     h: pallas_network::miniprotocols::chainsync::HeaderContent,
 ) -> Result<PendingHeader> {
-    let hdr = MultiEraHeader::decode(h.variant, h.byron_prefix.map(|p| p.0), &h.cbor)?;
-    let point = Point::Specific(hdr.slot(), hdr.hash().to_vec());
-    let prev_hash = hdr
-        .previous_hash()
-        .ok_or_else(|| anyhow!("header at slot {} has no previous_hash", hdr.slot()))?;
+    let era = EraName::from_header_variant(h.variant)
+        .map_err(|e| anyhow!("unrecognized chain-sync header era variant {}: {e}", h.variant))?;
+    if era == EraName::Byron {
+        bail!("Byron-era headers are not supported");
+    }
+    let hdr: Header = amaru_kernel::cbor::decode(&h.cbor)?;
+    let slot = hdr.slot().as_u64();
+    let hash: [u8; 32] = *hdr.hash();
+    let point = Point::Specific(slot, hash.to_vec());
+    let prev_hash: [u8; 32] = *hdr
+        .parent_hash()
+        .ok_or_else(|| anyhow!("header at slot {slot} has no previous_hash"))?;
+    let block_no = hdr.block_height().as_u64();
     let meta = BlockMeta {
-        slot: hdr.slot(),
-        hash: (*hdr.hash().as_ref()).try_into().expect("32-byte hash"),
-        prev_hash: (*prev_hash.as_ref()).try_into().expect("32-byte hash"),
-        block_no: Some(hdr.number()),
+        slot,
+        hash,
+        prev_hash,
+        block_no: Some(block_no),
     };
     Ok(PendingHeader {
         point,
         meta,
-        block_no: hdr.number(),
+        block_no,
     })
 }
 
@@ -151,9 +172,12 @@ async fn flush_pending(
         headers.len()
     );
 
-    let blocks: Vec<MultiEraBlock> = bodies
+    let blocks: Vec<Block> = bodies
         .iter()
-        .map(|b| MultiEraBlock::decode(b))
+        .map(|b| {
+            let network_block = NetworkBlock::try_from(RawBlock::from(b.as_slice()))?;
+            network_block.decode_block()
+        })
         .collect::<Result<_, _>>()?;
     let decoded_all = decode::decode_blocks_parallel(&blocks);
 

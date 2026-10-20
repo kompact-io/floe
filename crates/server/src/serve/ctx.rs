@@ -22,7 +22,7 @@ mod query;
 use std::sync::Arc;
 
 use anyhow::Result;
-use pallas_addresses::Address;
+use amaru_kernel::address::Address;
 use rusqlite::Connection;
 
 use crate::health::Health;
@@ -62,10 +62,10 @@ impl Ctx {
                 };
             }
         };
-        // `tx.hash()` is the transaction id, computed the same way
+        // `tx.body.id()` is the transaction id, computed the same way
         // regardless of which backend accepts it -- no need to parse
         // one back out of amaru's response body.
-        let tx_hash = tx.hash().to_vec();
+        let tx_hash = tx.body.id().to_vec();
 
         match submit::post_tx(&self.amaru_submit_api, raw).await {
             Ok((status, _body)) if (200..300).contains(&status) => {
@@ -116,7 +116,7 @@ pub struct Tx {
 /// -- `utxo` doesn't store raw address bytes at all. Byte-exact, not
 /// a rebuilt equivalent: `address_header` is the real header
 /// `decode.rs` saw, so this is the original address, parsed back
-/// through `pallas_addresses` rather than hand-assembled. Lossless for
+/// through `amaru_kernel::address` rather than hand-assembled. Lossless for
 /// every address floe indexes: Byron is never indexed and pointer
 /// addresses aren't supported (not approximated -- `decode::Credentials`
 /// already collapses `Pointer` into the same shape as enterprise, so

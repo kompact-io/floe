@@ -31,9 +31,8 @@ use axum::extract::{Extension, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use pallas_codec::minicbor as pallas_minicbor;
-use pallas_codec::utils::PositiveCoin;
-use pallas_primitives::conway::Multiasset;
+use amaru_kernel::cardano::multiasset::Multiasset;
+use amaru_kernel::cardano::positive_coin::PositiveCoin;
 use tracing::info;
 
 use floe_dto_http::ErrorBody;
@@ -277,19 +276,19 @@ fn chain_point_dto(p: Option<BlockPoint>) -> q::ChainPoint {
 }
 
 /// Decodes the raw CBOR multiasset map floe stores into
-/// `ca::Multiasset` -- same source bytes and pallas type `grpc.rs`'s
+/// `ca::Multiasset` -- same source bytes and amaru-kernel type `grpc.rs`'s
 /// `decode_assets` decodes, into a different target shape.
 fn asset_dtos(bytes: &[u8]) -> Result<Vec<ca::Multiasset>> {
-    let ma: Multiasset<PositiveCoin> = pallas_minicbor::decode(bytes)?;
+    let ma: Multiasset<PositiveCoin> = amaru_kernel::cbor::decode(bytes)?;
     Ok(ma
-        .into_iter()
+        .iter()
         .map(|(policy, assets)| ca::Multiasset {
             policy_id: policy.to_vec(),
             assets: assets
-                .into_iter()
+                .iter()
                 .map(|(name, qty)| ca::Asset {
                     name: name.to_vec(),
-                    quantity: u64::from(qty),
+                    quantity: u64::from(*qty),
                 })
                 .collect(),
         })

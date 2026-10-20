@@ -84,11 +84,15 @@ struct DecodedAddress {
 /// covers payment addresses, so `Stake` is decomposed here instead.
 #[wasm_bindgen(js_name = decodeAddress)]
 pub fn decode_address(address: String) -> Result<String, String> {
-    let addr: pallas_addresses::Address = address.parse().map_err(|e| format!("{e}"))?;
+    let addr: amaru_kernel::address::Address = address
+        .parse()
+        .map_err(|_| format!("invalid address: {address}"))?;
     let decoded = match &addr {
-        pallas_addresses::Address::Stake(stake) => DecodedAddress {
+        amaru_kernel::address::Address::Stake(stake) => DecodedAddress {
             pay_hash: None,
-            stake_hash: Some(hex::encode(stake.payload().as_hash())),
+            stake_hash: Some(hex::encode(
+                amaru_kernel::AsHash::as_hash(&stake.credential()),
+            )),
         },
         _ => {
             let (pay_hash, stake_hash) = crate::shelley_hashes(&addr).map_err(|e| e.to_string())?;

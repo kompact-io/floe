@@ -68,9 +68,10 @@ use floe_dto_http::cardano::ScriptLang;
 use floe_dto_http::query::{
     ReadDataRequest, ReadTxRequest, ReadUtxosRequest, SearchUtxosRequest, TxoRef,
 };
-use pallas_addresses::Address;
-use pallas_codec::utils::{Bytes, PositiveCoin};
-use pallas_crypto::hash::Hash;
+use amaru_kernel::address::Address;
+use amaru_kernel::cardano::multiasset::{Assets, Multiasset};
+use amaru_kernel::cardano::positive_coin::PositiveCoin;
+use amaru_kernel::Hash;
 use rusqlite::Connection;
 
 struct TempDb(PathBuf);
@@ -129,12 +130,13 @@ const SCRIPT_CBOR: [u8; 3] = [9, 9, 9];
 fn asset_cbor() -> Vec<u8> {
     let mut assets = BTreeMap::new();
     assets.insert(
-        Bytes::from(ASSET_NAME.to_vec()),
+        amaru_kernel::AssetName::try_from(ASSET_NAME).unwrap(),
         PositiveCoin::try_from(ASSET_QTY).unwrap(),
     );
     let mut multiasset = BTreeMap::new();
-    multiasset.insert(Hash::<28>::from(ASSET_POLICY), assets);
-    pallas_codec::minicbor::to_vec(&multiasset).expect("infallible")
+    multiasset.insert(Hash::<28>::from(ASSET_POLICY), Assets::try_from(assets).unwrap());
+    let multiasset: Multiasset<PositiveCoin> = multiasset.into();
+    amaru_kernel::to_cbor(&multiasset)
 }
 
 /// Three UTxOs at the same payment part hash, one block: a plain one

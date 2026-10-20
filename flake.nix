@@ -5,9 +5,15 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     crane.url = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
-    # Only needed for wasm32-unknown-unknown; nixpkgs' own rustc only ships
-    # the host's target, so that std has to come from somewhere that lets
-    # you pick targets a la carte.
+    # Needed for the host toolchain too, not just wasm32-unknown-unknown:
+    # amaru-kernel (crates.io git dep, see workspace Cargo.toml) contains a
+    # loop + conditional-return borrow pattern (`CompactMap`/`CompactSet`'s
+    # `promote`) that nixpkgs' pinned stable rustc's NLL borrowck rejects
+    # outright (a real `error[E0506]`, not a lint) -- only a sufficiently
+    # recent compiler accepts it (confirmed: nixpkgs stable rejects it,
+    # a contemporary nightly accepts it with no special flags). fenix's
+    # nightly is what supplies that newer rustc here, same as it already
+    # supplied the wasm32 target's std.
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -80,13 +86,20 @@
             };
           };
 
-        native = mkCrateSet { craneLib = crane.mkLib pkgs; };
+        # See the `fenix` input's own comment: amaru-kernel needs a newer
+        # rustc than nixpkgs' pinned stable ships, so the host toolchain
+        # itself comes from fenix now too, not just the wasm32 target's std.
+        native = mkCrateSet {
+          craneLib = (crane.mkLib pkgs).overrideToolchain fenix.packages.${system}.default.toolchain;
+        };
 
         # wasm32-unknown-unknown: no C toolchain needed (no native deps),
-        # just fenix's std for the target.
+        # just fenix's std for the target -- same nightly channel as the
+        # host toolchain above, so both sides of a `cargo check --target
+        # wasm32-unknown-unknown` agree on which compiler built which part.
         wasmCraneLib = (crane.mkLib pkgs).overrideToolchain (fenix.packages.${system}.combine [
-          fenix.packages.${system}.stable.toolchain
-          fenix.packages.${system}.targets.wasm32-unknown-unknown.stable.rust-std
+          fenix.packages.${system}.default.toolchain
+          fenix.packages.${system}.targets.wasm32-unknown-unknown.latest.rust-std
         ]);
         wasmCommonArgs = native.commonArgs // {
           pname = "floe-client-wasm";

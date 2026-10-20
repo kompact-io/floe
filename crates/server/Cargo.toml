@@ -34,11 +34,7 @@ floe-dto-http = { workspace = true, features = ["json", "cbor", "metrics"] }
 http = { workspace = true }
 minicbor = { workspace = true }
 pallas-network = { workspace = true }
-pallas-traverse = { workspace = true }
-pallas-crypto = { workspace = true }
-pallas-addresses = { workspace = true }
-pallas-primitives = { workspace = true }
-pallas-codec = { workspace = true }
+amaru-kernel = { workspace = true }
 rayon = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }

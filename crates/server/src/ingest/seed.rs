@@ -9,11 +9,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 
+use amaru_kernel::address::Address;
+use amaru_kernel::cardano::asset_name::AssetName;
+use amaru_kernel::cardano::multiasset::{Assets, Multiasset};
+use amaru_kernel::cardano::positive_coin::PositiveCoin;
+use amaru_kernel::{Hash, Hasher};
 use anyhow::{Result, anyhow, bail};
-use pallas_addresses::Address;
-use pallas_codec::minicbor;
-use pallas_crypto::hash::Hasher;
-use pallas_primitives::{AssetName, PolicyId, PositiveCoin};
 use rayon::prelude::*;
 use rusqlite::Connection;
 use tracing::{info, instrument};
@@ -277,8 +278,8 @@ fn decode_entry(tx_hash: [u8; 32], ix: u16, val: &[u8]) -> Result<Option<SeedEnt
     let tx_out = mempack::decode_tx_out(val)?;
 
     let address = match Address::from_bytes(&tx_out.address) {
-        Ok(a) => a,
-        Err(_) => return Ok(None),
+        Some(a) => a,
+        None => return Ok(None),
     };
     if matches!(address, Address::Byron(_)) {
         return Ok(None);
@@ -289,7 +290,7 @@ fn decode_entry(tx_hash: [u8; 32], ix: u16, val: &[u8]) -> Result<Option<SeedEnt
     let assets = if tx_out.assets.is_empty() {
         None
     } else {
-        let mut grouped: BTreeMap<PolicyId, BTreeMap<AssetName, PositiveCoin>> = BTreeMap::new();
+        let mut grouped: BTreeMap<Hash<28>, BTreeMap<AssetName, PositiveCoin>> = BTreeMap::new();
         for a in &tx_out.assets {
             let qty = PositiveCoin::try_from(a.qty).map_err(|_| {
                 anyhow!(
@@ -297,12 +298,27 @@ fn decode_entry(tx_hash: [u8; 32], ix: u16, val: &[u8]) -> Result<Option<SeedEnt
                     hex::encode(tx_hash)
                 )
             })?;
+            let name = AssetName::try_from(a.name.as_slice()).map_err(|_| {
+                anyhow!(
+                    "asset name too long in seed output {}#{ix}",
+                    hex::encode(tx_hash)
+                )
+            })?;
             grouped
-                .entry(PolicyId::from(a.policy))
+                .entry(Hash::from(a.policy))
                 .or_default()
-                .insert(AssetName::from(a.name.clone()), qty);
+                .insert(name, qty);
         }
-        Some(minicbor::to_vec(&grouped).expect("infallible"))
+        let multiasset: Multiasset<PositiveCoin> = grouped
+            .into_iter()
+            .map(|(policy, names)| {
+                Assets::try_from(names)
+                    .map(|assets| (policy, assets))
+                    .map_err(|_| anyhow!("empty asset bundle for a policy in seed output {}#{ix}", hex::encode(tx_hash)))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?
+            .into();
+        Some(amaru_kernel::to_cbor(&multiasset))
     };
 
     let mut datum_row = None;

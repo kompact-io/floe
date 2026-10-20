@@ -14,13 +14,18 @@
 //! lives in each scheme's own module -- they only ever see
 //! `SubmitOutcome`, never these pieces directly.
 
+use amaru_kernel::cardano::transaction::Transaction;
 use anyhow::Result;
-use pallas_traverse::MultiEraTx;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-pub(crate) fn decode_tx_bytes(bytes: &[u8]) -> Result<MultiEraTx<'_>> {
-    MultiEraTx::decode(bytes).map_err(|e| anyhow::anyhow!("invalid transaction: {e}"))
+/// `pallas_traverse::MultiEraTx::decode` tried each era's own tx shape in
+/// turn (newest first) since the eras' tx CBOR shapes differ; floe's scope
+/// is Shelley..Conway only (no Byron), and amaru-kernel already models that
+/// whole range as a single `Transaction` shape, so no era probing is
+/// needed here at all.
+pub(crate) fn decode_tx_bytes(bytes: &[u8]) -> Result<Transaction> {
+    amaru_kernel::cbor::decode(bytes).map_err(|e| anyhow::anyhow!("invalid transaction: {e}"))
 }
 
 /// Posts raw tx bytes to amaru's submit-api over a plain TCP

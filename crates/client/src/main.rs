@@ -19,7 +19,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use pallas_addresses::Address;
+use amaru_kernel::address::Address;
 
 use floe_client::{Backend, Hash28, NetworkArg, SchemeArgs, TxHash, parse_hex};
 use floe_dto_http::query::{
@@ -159,7 +159,9 @@ async fn dispatch<B: Backend>(client: &mut B, cmd: Command) -> Result<Output> {
             max_items,
         } => {
             let (pay_hash, stake_hash) = if let Some(address) = address {
-                let addr: Address = address.parse()?;
+                let addr: Address = address
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("invalid address: {address}"))?;
                 floe_client::shelley_hashes(&addr)?
             } else {
                 (

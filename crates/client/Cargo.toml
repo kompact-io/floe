@@ -69,8 +69,7 @@ floe-dto-grpc = { workspace = true, optional = true }
 floe-dto-http = { workspace = true, features = ["json", "cbor", "metrics"] }
 hex = { workspace = true }
 minicbor = { workspace = true }
-pallas-addresses = { workspace = true }
-pallas-crypto = { workspace = true }
+amaru-kernel = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, optional = true }
 # `tls-ring`/`tls-webpki-roots`: `grpc::Client::connect`'s `Endpoint`

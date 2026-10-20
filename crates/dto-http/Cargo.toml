@@ -6,7 +6,7 @@ description.workspace = true
 
 # `json`/`cbor` are independent: a consumer that only wants one wire
 # format doesn't pull the other's deps (serde vs. minicbor). `hex` and
-# `pallas-addresses` stay unconditional -- hex
+# `amaru-kernel` stay unconditional -- hex
 # formatting backs JSON's byte encoding and error messages regardless,
 # and address bech32 rendering is needed by both wire formats (see
 # `query::Address`).
@@ -26,7 +26,7 @@ metrics = []
 [dependencies]
 hex = { workspace = true }
 minicbor = { workspace = true, optional = true }
-pallas-addresses = { workspace = true }
+amaru-kernel = { workspace = true }
 schemars = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 

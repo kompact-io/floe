@@ -197,7 +197,10 @@ fn script_dto(s: Option<c::Script>) -> Option<hc::Script> {
 }
 
 fn address_dto(bytes: &[u8]) -> Result<hq::Address> {
-    Ok(hq::Address(pallas_addresses::Address::from_bytes(bytes)?))
+    Ok(hq::Address(
+        amaru_kernel::address::Address::from_bytes(bytes)
+            .ok_or_else(|| anyhow::anyhow!("invalid address bytes"))?,
+    ))
 }
 
 fn tx_output_dto(out: c::TxOutput) -> Result<hc::TxOutput> {

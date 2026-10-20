@@ -38,9 +38,9 @@ mod self_pay;
 
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
-use pallas_addresses::Address;
+use amaru_kernel::address::Address;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -154,7 +154,8 @@ fn resolve_hash(cli: &Cli) -> Result<(Hash28, Option<Hash28>)> {
         return Ok((pay_hash, cli.stake_hash));
     }
     let address: Address = if let Some(addr) = &cli.address {
-        addr.parse().context("--address is not a valid address")?
+        addr.parse()
+            .map_err(|_| anyhow::anyhow!("--address is not a valid address"))?
     } else if let Some(skey) = cli.skey {
         let info = floe_client::key_info::key_info(skey, cli.network.0)?;
         info!(address = %info.address, "derived address from --skey");

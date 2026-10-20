@@ -17,13 +17,15 @@ use std::fs::File;
 use std::io::Read;
 use std::rc::Rc;
 
+use amaru_kernel::cardano::era_name::EraName;
+use amaru_kernel::cardano::header::Header;
+use amaru_kernel::cardano::network_block::NetworkBlock;
+use amaru_kernel::{Hasher, IsHeader, RawBlock};
 use anyhow::{Result, anyhow, bail};
 use floe::ingest::mempack::{Datum, ScriptRef, TxOut, decode_tx_out};
 use floe::ingest::tvar::{self, KEY_LEN};
-use pallas_crypto::hash::Hasher;
 use pallas_network::facades::PeerClient;
 use pallas_network::miniprotocols::{Point, chainsync::NextResponse};
-use pallas_traverse::{MultiEraBlock, MultiEraHeader};
 
 #[derive(Default)]
 struct Stats {
@@ -307,47 +309,64 @@ async fn collect(
                 break;
             }
             NextResponse::RollForward(h, _) => {
-                let hdr = MultiEraHeader::decode(h.variant, h.byron_prefix.map(|p| p.0), &h.cbor)?;
-                let pt = Point::Specific(hdr.slot(), hdr.hash().to_vec());
+                if EraName::from_header_variant(h.variant)? == EraName::Byron {
+                    bail!("Byron-era headers are not supported");
+                }
+                let hdr: Header = amaru_kernel::cbor::decode(&h.cbor)?;
+                let slot = hdr.slot().as_u64();
+                let hash: [u8; 32] = *hdr.hash();
+                let pt = Point::Specific(slot, hash.to_vec());
                 let bytes = peer.blockfetch().fetch_single(pt).await?;
-                let blk = MultiEraBlock::decode(&bytes)?;
+                let network_block = NetworkBlock::try_from(RawBlock::from(bytes.as_slice()))?;
+                let blk = network_block.decode_block()?;
                 if nblocks == 0 {
                     println!(
                         "first block after anchor: slot={} block_no={} (apply starts here)",
-                        blk.slot(),
-                        blk.number()
+                        slot,
+                        blk.header.body().block_number
                     );
                 }
-                for tx in blk.txs() {
+                for (_ix, tx) in &blk {
                     ntx += 1;
-                    let valid = tx.is_valid();
+                    let valid = tx.is_expected_valid;
                     if !valid {
                         ninvalid += 1;
                     }
+                    let tx_hash: [u8; 32] = *tx.body.id();
                     let wits: Rc<Vec<[u8; 28]>> = Rc::new(
-                        tx.vkey_witnesses()
+                        tx.witnesses
+                            .verification_key_witness
                             .iter()
-                            .map(|w| Hasher::<224>::hash(&w.vkey).as_slice().try_into().unwrap())
+                            .flat_map(|ws| ws.iter())
+                            .map(|w| {
+                                let h: [u8; 28] =
+                                    *Hasher::<224>::hash(w.verification_key.as_slice());
+                                h
+                            })
                             .collect(),
                     );
-                    let spent = if valid {
-                        tx.consumes()
+                    let spent: Vec<&amaru_kernel::cardano::transaction_input::TransactionInput> = if valid {
+                        tx.body.inputs.iter().collect()
                     } else {
-                        tx.collateral()
+                        tx.body
+                            .collateral
+                            .as_ref()
+                            .map(|c| c.iter().collect())
+                            .unwrap_or_default()
                     };
                     for i in spent {
                         ninputs += 1;
-                        let k = key_of(i.hash().as_slice(), i.index());
+                        let k = key_of(i.transaction_id.as_ref(), i.index as u64);
                         if !created.remove(&k) {
                             needs.insert(k, wits.clone());
                         }
                     }
                     if valid {
-                        for (ix, _) in tx.produces() {
-                            created.insert(key_of(tx.hash().as_slice(), ix as u64));
+                        for ix in 0..tx.body.outputs.len() {
+                            created.insert(key_of(&tx_hash, ix as u64));
                         }
-                    } else if tx.collateral_return().is_some() {
-                        created.insert(key_of(tx.hash().as_slice(), tx.outputs().len() as u64));
+                    } else if tx.body.collateral_return.is_some() {
+                        created.insert(key_of(&tx_hash, tx.body.outputs.len() as u64));
                     }
                 }
                 nblocks += 1;
