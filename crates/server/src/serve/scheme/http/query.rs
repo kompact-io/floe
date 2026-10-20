@@ -134,7 +134,7 @@ pub async fn serve(addr: &str, ctx: Ctx, formats: HttpFormats) -> Result<()> {
 
 fn build_router(state: Ctx, formats: HttpFormats) -> Router {
     Router::new()
-        .route(q::READ_UTXO_PATH, post(read_utxo_handler))
+        .route(q::READ_UTXOS_PATH, post(read_utxos_handler))
         .route(q::SEARCH_UTXOS_PATH, post(search_utxos_handler))
         .route(q::READ_DATA_PATH, post(data_handler))
         .route(q::READ_TX_PATH, post(tx_handler))
@@ -374,6 +374,7 @@ fn tx_dto(t: Tx, block: Option<BlockPoint>) -> Result<q::Tx> {
         // Hardcoded, same tracked gap as `grpc.rs`'s `any_chain_tx` --
         // see `TODO.md`.
         successful: true,
+        required_signers: t.required_signers.iter().map(|h| h.to_vec()).collect(),
     })
 }
 
@@ -396,7 +397,7 @@ fn address_filter(
 
 // --- ReadUtxos: POST /query/read-utxos ------------------------------------
 
-async fn read_utxo_handler(
+async fn read_utxos_handler(
     State(st): State<Ctx>,
     Extension(formats): Extension<HttpFormats>,
     headers: HeaderMap,
@@ -406,7 +407,7 @@ async fn read_utxo_handler(
         Ok(fmt) => fmt,
         Err(msg) => return not_acceptable(msg),
     };
-    st.requests.record(fmt.scheme(), q::READ_UTXO_PATH);
+    st.requests.record(fmt.scheme(), q::READ_UTXOS_PATH);
 
     let req: q::ReadUtxosRequest = match parse_body(fmt, &body) {
         Ok(req) => req,

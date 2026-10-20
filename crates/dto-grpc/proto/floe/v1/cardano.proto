@@ -116,6 +116,11 @@ message Tx {
   bytes hash = 13; // Hash of the transaction that serves as main identifier
   repeated GovernanceActionProposal proposals = 14; // List of governance actions proposed
   repeated VoterVotes votes = 15; // List of voters and their corresponding votes cast in this transaction
+  // floe addition, filling a gap in UTxORPC spec v1 itself (confirmed
+  // against upstream, not just this fork): `votes` above is already
+  // one field past what v1 defines, so this is a second -- it doesn't
+  // make the spec any less aligned than it already was.
+  repeated bytes required_signers = 16; // Key hashes required to sign this tx (CBOR tx_body key 14); empty if none.
 }
 
 // Define a governance action proposal

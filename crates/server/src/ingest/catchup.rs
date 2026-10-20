@@ -49,8 +49,11 @@ fn script_bytes(s: &ScriptRow) -> usize {
 
 /// The pending-changes buffer for the current chunk, plus the continuity
 /// state that must survive across flushes.
+/// `(slot, required_signers)` -- buffered per pending tx until flush.
+type TxSlotAndSigners = (u64, Vec<[u8; 28]>);
+
 pub struct Engine {
-    txs: HashMap<TxHash, u64>,
+    txs: HashMap<TxHash, TxSlotAndSigners>,
     created: HashMap<OutputRef, (u64, Utxo)>,
     tombstones: Vec<OutputRef>,
     datums: HashMap<[u8; 32], (u64, DatumRow)>,
@@ -114,8 +117,9 @@ impl Engine {
 
         for t in &decoded.txs {
             if !self.txs.contains_key(&t.hash) {
-                self.bytes += size_of::<TxHash>();
-                self.txs.insert(t.hash, meta.slot);
+                self.bytes += size_of::<TxHash>() + t.required_signers.len() * 28;
+                self.txs
+                    .insert(t.hash, (meta.slot, t.required_signers.clone()));
             }
         }
         for u in &decoded.created {
@@ -164,10 +168,10 @@ impl Engine {
             store::delete_utxo(&tx, r)?;
         }
 
-        let mut txs: Vec<(TxHash, u64)> = self.txs.drain().collect();
+        let mut txs: Vec<(TxHash, TxSlotAndSigners)> = self.txs.drain().collect();
         txs.sort();
-        for (hash, slot) in &txs {
-            store::insert_tx(&tx, *slot, hash)?;
+        for (hash, (slot, required_signers)) in &txs {
+            store::insert_tx(&tx, *slot, hash, required_signers)?;
         }
 
         let mut created: Vec<(u64, Utxo)> = self.created.drain().map(|(_, v)| v).collect();
@@ -269,10 +273,19 @@ mod tests {
     }
 
     fn decoded_block(creates: &[OutputRef], spends: &[OutputRef]) -> DecodedBlock {
-        let mut txs: Vec<TxRow> = creates.iter().map(|r| TxRow { hash: r.tx_hash }).collect();
+        let mut txs: Vec<TxRow> = creates
+            .iter()
+            .map(|r| TxRow {
+                hash: r.tx_hash,
+                required_signers: vec![],
+            })
+            .collect();
         let spender = fresh_spender();
         if !spends.is_empty() {
-            txs.push(TxRow { hash: spender });
+            txs.push(TxRow {
+                hash: spender,
+                required_signers: vec![],
+            });
         }
         DecodedBlock {
             txs,

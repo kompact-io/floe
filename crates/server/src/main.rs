@@ -168,6 +168,12 @@ fn run(args: RunArgs) -> Result<()> {
 
     let health = Arc::new(Health::default());
     health.set_magic(args.magic);
+    // Known immediately, independent of `conn`/seeding -- set before
+    // any listener spawns below so a client can never race a request
+    // in ahead of this (see `force_fresh_no_peer`'s own doc).
+    if args.peer.is_none() {
+        health.force_fresh_no_peer();
+    }
     let cfg = sync::ModeConfig {
         k: args.k,
         margin: args.margin,

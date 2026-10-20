@@ -92,7 +92,7 @@ impl Client {
 
 impl Backend for Client {
     async fn read_utxos(&mut self, req: ReadUtxosRequest) -> Result<ReadUtxosResponse> {
-        self.request(floe_dto_http::query::READ_UTXO_PATH, &req)
+        self.request(floe_dto_http::query::READ_UTXOS_PATH, &req)
             .await
     }
 

@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 use pallas_addresses::{Address, ShelleyAddress, ShelleyDelegationPart, ShelleyPaymentPart};
 use pallas_codec::minicbor;
 use pallas_primitives::conway::{DatumOption, ScriptRef as PallasScriptRef, Value};
-use pallas_traverse::{ComputeHash, MultiEraBlock, MultiEraOutput, MultiEraTx, OriginalHash};
+use pallas_traverse::{
+    ComputeHash, MultiEraBlock, MultiEraOutput, MultiEraSigners, MultiEraTx, OriginalHash,
+};
 
 pub type TxHash = [u8; 32];
 
@@ -69,12 +71,18 @@ pub struct ScriptRow {
     pub cbor: Vec<u8>,
 }
 
-/// A tx's existence and parent block -- no body, no validity flag. See
-/// `store::BASE_SCHEMA_SQL`'s `tx` table doc for why this is minimal by
-/// design, not a placeholder for more fields yet to come.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A tx's existence and parent block, plus `required_signers` -- no
+/// other body fields (no certs, mint, fee, ...). See
+/// `store::BASE_SCHEMA_SQL`'s `tx` table doc: this stays minimal by
+/// design, `required_signers` included deliberately rather than as a
+/// first step towards storing the rest of the tx body.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxRow {
     pub hash: TxHash,
+    /// Empty for a tx with no `required_signers` field, or one
+    /// inherited from a seed snapshot (which carries no tx-body data
+    /// at all, not just this field -- see `seed.rs`).
+    pub required_signers: Vec<[u8; 28]>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -90,6 +98,17 @@ pub struct DecodedBlock {
 
 pub(crate) fn hash_bytes<const N: usize>(h: impl AsRef<[u8]>) -> [u8; N] {
     h.as_ref().try_into().expect("wrong hash length")
+}
+
+/// `tx.required_signers()` across every era: `NotApplicable` (Byron/
+/// Shelley/Allegra/Mary, no such CBOR field at all) and `Empty` (field
+/// present but empty) both collapse to `vec![]` -- `TxRow` has no use
+/// for the distinction, same as every other "absent" case here.
+fn required_signers(tx: &MultiEraTx) -> Vec<[u8; 28]> {
+    match tx.required_signers() {
+        MultiEraSigners::AlonzoCompatible(signers) => signers.iter().map(hash_bytes).collect(),
+        _ => vec![],
+    }
 }
 
 /// `(pay_hash, stake_hash, address_header)`. `pay_hash` is `None` only
@@ -158,7 +177,10 @@ pub fn decode_blocks_parallel(blks: &[MultiEraBlock]) -> Vec<DecodedBlock> {
 
 fn decode_tx(tx: &MultiEraTx, out: &mut DecodedBlock) {
     let tx_hash: TxHash = hash_bytes(tx.hash());
-    out.txs.push(TxRow { hash: tx_hash });
+    out.txs.push(TxRow {
+        hash: tx_hash,
+        required_signers: required_signers(tx),
+    });
 
     for input in tx.consumes() {
         out.spent.insert(

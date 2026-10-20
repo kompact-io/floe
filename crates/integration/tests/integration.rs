@@ -192,7 +192,10 @@ fn seed(path: &Path) {
     let decoded = DecodedBlock {
         txs: [TX0, TX1, TX2]
             .into_iter()
-            .map(|hash| TxRow { hash })
+            .map(|hash| TxRow {
+                hash,
+                required_signers: vec![],
+            })
             .collect(),
         spent: Default::default(),
         created: vec![plain, with_asset_and_script, with_datum],

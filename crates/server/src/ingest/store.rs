@@ -26,10 +26,13 @@ CREATE TABLE IF NOT EXISTS block(
 -- bulk-insert performance case to defer this for.
 CREATE INDEX IF NOT EXISTS block_hash ON block(hash);
 
--- Minimal by design: just a tx's id and its parent block. No body, no
--- validity flag, no fee -- `ReadTx` (UTxORPC) hydrates inputs/outputs
--- from `utxo` alone (see `query::by_tx_hash`); add columns here only
--- when a concrete need shows up, not preemptively.
+-- Minimal by design: just a tx's id, its parent block, and
+-- `required_signers` -- no validity flag, no fee, no other body field.
+-- `ReadTx` (UTxORPC) hydrates inputs/outputs from `utxo` alone (see
+-- `query::by_tx_hash`); add further columns here only when a concrete
+-- need shows up, not preemptively. `required_signers` is concatenated
+-- fixed-28-byte hashes (NULL if none), unindexed -- not a queryable
+-- field, just carried through for `ReadTx` to return.
 --
 -- `block_slot` is deliberately NOT a FK to `block(slot)`: catch-up mode
 -- checkpoints one `block` row per whole chunk, not one per block (see
@@ -39,7 +42,8 @@ CREATE INDEX IF NOT EXISTS block_hash ON block(hash);
 -- (see `rollback`, below), independent of `block`'s own deletion.
 CREATE TABLE IF NOT EXISTS tx(
   hash BLOB PRIMARY KEY,
-  block_slot INTEGER NOT NULL
+  block_slot INTEGER NOT NULL,
+  required_signers BLOB
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS datum(
@@ -289,10 +293,19 @@ pub(crate) fn insert_block_row(conn: &Connection, meta: &BlockMeta) -> Result<()
 /// production, but it keeps the function idempotent (retried
 /// flush/apply) without needing a continuity check the way the single
 /// `block` row per slot does.
-pub(crate) fn insert_tx(conn: &Connection, slot: u64, hash: &TxHash) -> Result<()> {
+pub(crate) fn insert_tx(
+    conn: &Connection,
+    slot: u64,
+    hash: &TxHash,
+    required_signers: &[[u8; 28]],
+) -> Result<()> {
     conn.execute(
-        "INSERT OR IGNORE INTO tx(hash, block_slot) VALUES (?1, ?2)",
-        params![hash.as_slice(), slot],
+        "INSERT OR IGNORE INTO tx(hash, block_slot, required_signers) VALUES (?1, ?2, ?3)",
+        params![
+            hash.as_slice(),
+            slot,
+            (!required_signers.is_empty()).then(|| required_signers.concat())
+        ],
     )?;
     Ok(())
 }
@@ -392,7 +405,7 @@ pub fn apply(conn: &mut Connection, meta: &BlockMeta, decoded: &DecodedBlock) ->
     )?;
 
     for t in &decoded.txs {
-        insert_tx(&tx, meta.slot, &t.hash)?;
+        insert_tx(&tx, meta.slot, &t.hash, &t.required_signers)?;
     }
 
     for u in &decoded.created {
@@ -590,10 +603,19 @@ mod tests {
     }
 
     fn decoded_block(creates: &[OutputRef], spends: &[OutputRef]) -> DecodedBlock {
-        let mut txs: Vec<TxRow> = creates.iter().map(|r| TxRow { hash: r.tx_hash }).collect();
+        let mut txs: Vec<TxRow> = creates
+            .iter()
+            .map(|r| TxRow {
+                hash: r.tx_hash,
+                required_signers: vec![],
+            })
+            .collect();
         let spender = fresh_spender();
         if !spends.is_empty() {
-            txs.push(TxRow { hash: spender });
+            txs.push(TxRow {
+                hash: spender,
+                required_signers: vec![],
+            });
         }
         DecodedBlock {
             txs,

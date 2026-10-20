@@ -140,7 +140,12 @@ impl Chunk {
         let mut txs: Vec<[u8; 32]> = self.txs.drain().collect();
         txs.sort();
         for hash in &txs {
-            store::insert_tx(&tx, self.anchor_slot, hash)?;
+            // A seed snapshot carries no tx-body data at all (just the
+            // UTxOs it produced) -- `required_signers` is empty here
+            // the same way `ChainPoint`/`block_ref` are zero-valued
+            // for seed-inherited rows elsewhere, not a gap specific to
+            // this field.
+            store::insert_tx(&tx, self.anchor_slot, hash, &[])?;
         }
 
         let mut rows = std::mem::take(&mut self.rows);
@@ -552,7 +557,7 @@ mod tests {
             },
         )
         .unwrap();
-        store::insert_tx(&conn, 1, &[0x7fu8; 32]).unwrap();
+        store::insert_tx(&conn, 1, &[0x7fu8; 32], &[]).unwrap();
         store::insert_utxo(
             &conn,
             1,

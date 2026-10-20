@@ -269,6 +269,7 @@ fn tx_dto(tx_hash: TxHash, block: Option<q::ChainPoint>, t: c::Tx) -> Result<hq:
         inputs,
         outputs,
         successful: t.successful,
+        required_signers: t.required_signers,
     })
 }
 

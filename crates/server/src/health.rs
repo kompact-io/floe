@@ -65,6 +65,17 @@ impl Health {
         self.magic.store(magic, Ordering::Relaxed);
     }
 
+    /// Only for `main.rs`'s `--no-peer` path, called before any
+    /// listener spawns (not racing an incoming request against this):
+    /// with no sync loop, no block ever reaches `record_apply` to set
+    /// `fresh` the normal way, so `is_ready()` would stay permanently
+    /// false even once `Mode::Running`. There's no live peer tip to
+    /// fall behind in the first place, so "fresh" is vacuously true
+    /// here, not a readiness bypass.
+    pub fn force_fresh_no_peer(&self) {
+        self.fresh.store(true, Ordering::Relaxed);
+    }
+
     // One applied block's full update, all positional: adding
     // `utxos_spent` tipped this past clippy's default arg-count limit,
     // not worth a dedicated params struct for one caller.
