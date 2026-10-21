@@ -90,9 +90,9 @@ pub fn decode_address(address: String) -> Result<String, String> {
     let decoded = match &addr {
         amaru_kernel::address::Address::Stake(stake) => DecodedAddress {
             pay_hash: None,
-            stake_hash: Some(hex::encode(
-                amaru_kernel::AsHash::as_hash(&stake.credential()),
-            )),
+            stake_hash: Some(hex::encode(amaru_kernel::AsHash::as_hash(
+                &stake.credential(),
+            ))),
         },
         _ => {
             let (pay_hash, stake_hash) = crate::shelley_hashes(&addr).map_err(|e| e.to_string())?;

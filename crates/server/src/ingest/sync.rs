@@ -1,16 +1,27 @@
 //! sync: chainsync + blockfetch client, wired to `decode`, `store` and
 //! `catchup`.
+//!
+//! Chain-sync and block-fetch themselves go through `floe_n2n::client::Client`
+//! (real CIP-0164 pipelining via amaru-protocols/amaru-pure-stage, not
+//! pallas-network's lock-step `Client` -- see `plan-amaru-migration.md`).
+//! `pallas-network` survives here in exactly one place: [`fetch_header_via_pallas`],
+//! a one-shot bootstrap used only when there's no cached resume header yet
+//! (a fresh seed, or a pre-existing DB's first run under this code) --
+//! `amaru-protocols`' chain-sync initiator has no "resume from this Point"
+//! parameter; it needs a real `Header` object (see
+//! `floe_n2n::resume::seed_chain_store`), which floe caches going forward
+//! (`store::get_resume_header`/`set_resume_header`) specifically so this
+//! bootstrap only ever runs once per DB, not on every restart.
 
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
 
 use amaru_kernel::cardano::block::Block;
-use amaru_kernel::cardano::era_name::EraName;
 use amaru_kernel::cardano::header::Header;
-use amaru_kernel::cardano::network_block::NetworkBlock;
-use amaru_kernel::{IsHeader, RawBlock};
+use amaru_kernel::{IsHeader, NetworkMagic, Point};
 use anyhow::{Result, anyhow, bail};
-use pallas_network::facades::PeerClient;
-use pallas_network::miniprotocols::{Point, chainsync::NextResponse};
+use floe_n2n::client::Client;
+use floe_n2n::pipeline::HeaderEvent;
 use rusqlite::Connection;
 use tokio::sync::mpsc;
 use tracing::{info, instrument, warn};
@@ -47,6 +58,10 @@ pub enum Event {
         decoded: Box<DecodedBlock>,
         block_no: u64,
         peer_tip_block_no: u64,
+        /// This block's own header, re-encoded CBOR -- cached via
+        /// `store::set_resume_header` once applied, so a restart can resume
+        /// chain-sync from here without `fetch_header_via_pallas`.
+        header_cbor: Vec<u8>,
     },
     Rollback {
         slot: u64,
@@ -92,52 +107,85 @@ struct PendingHeader {
     point: Point,
     meta: BlockMeta,
     block_no: u64,
+    header_cbor: Vec<u8>,
 }
 
-/// `h.variant`/`h.cbor` are pallas_network's own chain-sync `HeaderContent`
-/// shape -- kept at this one boundary since `pallas_network` stays floe's
-/// wire transport (see the migration plan). `h.cbor` is already just the
-/// header's own `[body, signature]` term (chain-sync's own envelope, if
-/// any, is stripped by `pallas_network` itself before this), so it decodes
-/// directly as an `amaru_kernel::Header` -- same shape Shelley through
-/// Conway, no era-specific branching needed (floe doesn't support Byron;
-/// `h.byron_prefix` is only ever set for a Byron header and is otherwise
-/// unused here).
-fn decode_header(
-    h: pallas_network::miniprotocols::chainsync::HeaderContent,
-) -> Result<PendingHeader> {
-    let era = EraName::from_header_variant(h.variant)
-        .map_err(|e| anyhow!("unrecognized chain-sync header era variant {}: {e}", h.variant))?;
-    if era == EraName::Byron {
-        bail!("Byron-era headers are not supported");
+/// `IntersectNotFound` is a valid protocol response, not something resuming
+/// treats as an error -- it's the routine case right after the peer
+/// restarts: unlike a `cardano-node` that's always near its own live tip,
+/// amaru persists state and resumes from an earlier point in its own
+/// history, then chainsyncs back up to where it left off from its own
+/// peers. Our resume point (floe's last checkpoint) can easily be ahead of
+/// that for a while. `Client::connect_with_retry` (not this module) retries
+/// by reconnecting from scratch -- `amaru-protocols`' chain-sync initiator
+/// has no "retry `FindIntersect` on this same connection" primitive, unlike
+/// `pallas_network`'s `Client`.
+const INTERSECT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+/// ~2 minutes at `INTERSECT_RETRY_DELAY` -- long enough for a peer to
+/// chainsync back up to a reasonably recent point after a restart, not
+/// so long that a genuinely wrong/unreachable resume point hangs
+/// silently forever.
+const MAX_INTERSECT_RETRIES: u32 = 60;
+
+/// One-shot bootstrap: fetch the header at `(slot, hash)` via
+/// `pallas-network`'s blockfetch (chain-sync never hands back the
+/// intersection point's own content, only blocks after it -- see
+/// `floe_n2n`'s `dial_peer` example, which uses the identical pattern).
+/// Only called when `store::get_resume_header` found nothing cached.
+async fn fetch_header_via_pallas(
+    addr: &str,
+    magic: u64,
+    slot: u64,
+    hash: [u8; 32],
+) -> Result<Header> {
+    use amaru_kernel::RawBlock;
+    use amaru_kernel::cardano::network_block::NetworkBlock;
+    use pallas_network::facades::PeerClient;
+    use pallas_network::miniprotocols::Point as PallasPoint;
+
+    let mut client = PeerClient::connect(addr, magic).await?;
+    let point = PallasPoint::Specific(slot, hash.to_vec());
+    let bytes = client.blockfetch().fetch_single(point).await?;
+    let network_block = NetworkBlock::try_from(RawBlock::from(bytes.as_slice()))?;
+    Ok(network_block.decode_block()?.header)
+}
+
+/// Where to resume chain-sync from, resolved once before the fetch loop
+/// starts.
+pub(crate) enum Resume {
+    Header(Box<Header>),
+    Origin,
+}
+
+/// Prefers the cached header (`store::get_resume_header`); falls back to
+/// `fetch_header_via_pallas` using `store::tip`'s `(slot, hash)` if nothing's
+/// cached yet; `Resume::Origin` only for a DB with no tip at all (no
+/// `--seed`, never synced).
+async fn resolve_resume(addr: &str, magic: u64, conn: &Connection) -> Result<Resume> {
+    if let Some(bytes) = store::get_resume_header(conn)? {
+        let header: Header = amaru_kernel::cbor::decode(&bytes)?;
+        return Ok(Resume::Header(Box::new(header)));
     }
-    let hdr: Header = amaru_kernel::cbor::decode(&h.cbor)?;
-    let slot = hdr.slot().as_u64();
-    let hash: [u8; 32] = *hdr.hash();
-    let point = Point::Specific(slot, hash.to_vec());
-    let prev_hash: [u8; 32] = *hdr
-        .parent_hash()
-        .ok_or_else(|| anyhow!("header at slot {slot} has no previous_hash"))?;
-    let block_no = hdr.block_height().as_u64();
-    let meta = BlockMeta {
-        slot,
-        hash,
-        prev_hash,
-        block_no: Some(block_no),
-    };
-    Ok(PendingHeader {
-        point,
-        meta,
-        block_no,
-    })
+    match store::tip(conn)? {
+        None => Ok(Resume::Origin),
+        Some((slot, hash)) => {
+            info!(
+                slot,
+                hash = hex::encode(hash),
+                "no cached resume header -- fetching one via pallas-network"
+            );
+            let header = fetch_header_via_pallas(addr, magic, slot, hash).await?;
+            Ok(Resume::Header(Box::new(header)))
+        }
+    }
 }
 
-/// `fetch_single` for one header, `fetch_range` for more; decodes in
-/// parallel, then sends one `Event::Apply` per block in order. Returns
-/// `true` if `tx`'s receiver is gone and the caller should stop.
-#[instrument(skip(peer, headers, tx), fields(n = headers.len(), peer_tip_block_no))]
+/// `fetch_single`/`fetch_range`-equivalent via `Client::fetch_bodies`;
+/// decodes in parallel, then sends one `Event::Apply` per block in order.
+/// Returns `true` if `tx`'s receiver is gone and the caller should stop.
+#[instrument(skip(client, headers, tx), fields(n = headers.len(), peer_tip_block_no))]
 async fn flush_pending(
-    peer: &mut PeerClient,
+    client: &mut Client,
     headers: Vec<PendingHeader>,
     peer_tip_block_no: u64,
     tx: &mpsc::Sender<Event>,
@@ -146,38 +194,19 @@ async fn flush_pending(
         return Ok(false);
     }
 
-    let bodies: Vec<Vec<u8>> = if headers.len() == 1 {
-        vec![
-            peer.blockfetch()
-                .fetch_single(headers[0].point.clone())
-                .await?,
-        ]
-    } else {
-        let first = headers
-            .first()
-            .expect("checked non-empty above")
-            .point
-            .clone();
-        let last = headers
-            .last()
-            .expect("checked non-empty above")
-            .point
-            .clone();
-        peer.blockfetch().fetch_range((first, last)).await?
-    };
+    let from = headers.first().expect("checked non-empty above").point;
+    let through = headers.last().expect("checked non-empty above").point;
+    let network_blocks = client.fetch_bodies(from, through).await?;
     anyhow::ensure!(
-        bodies.len() == headers.len(),
-        "blockfetch returned {} bodies for {} requested headers",
-        bodies.len(),
+        network_blocks.len() == headers.len(),
+        "block-fetch returned {} bodies for {} requested headers",
+        network_blocks.len(),
         headers.len()
     );
 
-    let blocks: Vec<Block> = bodies
+    let blocks: Vec<Block> = network_blocks
         .iter()
-        .map(|b| {
-            let network_block = NetworkBlock::try_from(RawBlock::from(b.as_slice()))?;
-            network_block.decode_block()
-        })
+        .map(|b| b.decode_block())
         .collect::<Result<_, _>>()?;
     let decoded_all = decode::decode_blocks_parallel(&blocks);
 
@@ -187,6 +216,7 @@ async fn flush_pending(
             decoded: Box::new(decoded),
             block_no: h.block_no,
             peer_tip_block_no,
+            header_cbor: h.header_cbor,
         };
         if tx.send(ev).await.is_err() {
             return Ok(true);
@@ -195,93 +225,85 @@ async fn flush_pending(
     Ok(false)
 }
 
-/// `IntersectNotFound` is a valid protocol response (see
-/// `pallas_network`'s `IntersectResponse`, `(Option<Point>, Tip)`), not
-/// something `find_intersect` itself turns into an `Err` -- it's the
-/// routine case right after the peer restarts: unlike a `cardano-node`
-/// that's always near its own live tip, amaru persists state and
-/// resumes from an earlier point in its own history, then chainsyncs
-/// back up to where it left off from its own peers. Our resume point
-/// (floe's last checkpoint) can easily be ahead of that for a while.
-/// A failed intersect doesn't move the peer's chainsync read pointer,
-/// so proceeding past it regardless (as this used to) meant the peer
-/// then served whatever its own earliest known point was instead of
-/// ours -- for amaru specifically, that's its own bootstrap snapshot
-/// (the same archive floe's `--seed` is built from), so the very first
-/// block received was from there, mismatching our real tip and
-/// tripping `store::apply`'s continuity check.
-const INTERSECT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
-/// ~2 minutes at `INTERSECT_RETRY_DELAY` -- long enough for a peer to
-/// chainsync back up to a reasonably recent point after a restart, not
-/// so long that a genuinely wrong/unreachable resume point hangs
-/// silently forever.
-const MAX_INTERSECT_RETRIES: u32 = 60;
-
-/// Retries `find_intersect` against the given point until the peer
-/// confirms it (or gives up -- see `MAX_INTERSECT_RETRIES`'s doc
-/// comment, above).
-async fn find_intersect_with_retry(peer: &mut PeerClient, point: &Point) -> Result<()> {
-    for attempt in 1..=MAX_INTERSECT_RETRIES {
-        let (found, _tip) = peer.chainsync().find_intersect(vec![point.clone()]).await?;
-        if found.is_some() {
-            return Ok(());
-        }
-        warn!(
-            ?point,
-            attempt,
-            "intersect not found -- peer hasn't caught up to our resume point yet; retrying"
-        );
-        tokio::time::sleep(INTERSECT_RETRY_DELAY).await;
-    }
-    bail!(
-        "peer never caught up to our resume point {point:?} after {MAX_INTERSECT_RETRIES} attempts"
-    );
-}
-
 /// Pushes `Event`s into `tx` in chain order until the channel closes or an
 /// error occurs. While still deep, headers are batched up to
-/// `cfg.batch_size` per `fetch_range` call; near the tip, each block is
+/// `cfg.batch_size` per `fetch_bodies` call; near the tip, each block is
 /// fetched as soon as its header arrives, with no buffering delay.
-#[instrument(skip(point, tx, cfg), fields(addr, magic))]
-pub async fn fetch_loop(
+#[instrument(skip(resume, tx, cfg), fields(addr, magic))]
+pub(crate) async fn fetch_loop(
     addr: &str,
     magic: u64,
-    point: Point,
+    resume: Resume,
     tx: mpsc::Sender<Event>,
     cfg: ModeConfig,
 ) -> Result<()> {
-    let mut peer = PeerClient::connect(addr, magic).await?;
-    find_intersect_with_retry(&mut peer, &point).await?;
+    let resume_header = match &resume {
+        Resume::Header(h) => Some(h.as_ref()),
+        Resume::Origin => None,
+    };
+    let socket_addr = addr
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| anyhow!("could not resolve {addr}"))?;
+    let mut client = Client::connect_with_retry(
+        socket_addr,
+        NetworkMagic::from(magic),
+        resume_header,
+        INTERSECT_RETRY_DELAY,
+        MAX_INTERSECT_RETRIES,
+    )
+    .await?;
 
     let mut pending: Vec<PendingHeader> = Vec::new();
 
     loop {
-        match peer.chainsync().request_or_await_next().await? {
-            NextResponse::RollBackward(p, _tip) => {
+        match client.next_header().await? {
+            HeaderEvent::RollBackward { point, .. } => {
                 // Any buffered-but-not-yet-fetched headers are upstream of
                 // nothing we've emitted, so they're simply discarded.
                 pending.clear();
-                let slot = match p {
-                    Point::Origin => 0,
-                    Point::Specific(slot, _) => slot,
-                };
+                let slot = point.slot_or_default().as_u64();
                 if tx.send(Event::Rollback { slot }).await.is_err() {
                     return Ok(());
                 }
             }
-            NextResponse::Await => continue,
-            NextResponse::RollForward(h, tip) => {
-                let header = decode_header(h)?;
-                let depth = depth(tip.1, header.block_no);
+            HeaderEvent::RollForward {
+                header,
+                tip_block_no,
+            } => {
+                let point = floe_n2n::resume::point_of(&header);
+                let slot = point.slot().as_u64();
+                let hash: [u8; 32] = *header.hash();
+                let prev_hash: [u8; 32] = *header
+                    .parent_hash()
+                    .ok_or_else(|| anyhow!("header at slot {slot} has no previous_hash"))?;
+                let block_no = header.block_height().as_u64();
+                let header_cbor = amaru_kernel::cbor::to_vec(&*header)?;
+                let meta = BlockMeta {
+                    slot,
+                    hash,
+                    prev_hash,
+                    block_no: Some(block_no),
+                };
+
+                let depth = depth(tip_block_no, block_no);
                 let still_deep = depth > cfg.catchup_depth();
 
-                pending.push(header);
+                pending.push(PendingHeader {
+                    point,
+                    meta,
+                    block_no,
+                    header_cbor,
+                });
                 if !still_deep || pending.len() >= cfg.batch_size {
                     let batch = std::mem::take(&mut pending);
-                    if flush_pending(&mut peer, batch, tip.1, &tx).await? {
+                    if flush_pending(&mut client, batch, tip_block_no, &tx).await? {
                         return Ok(());
                     }
                 }
+            }
+            HeaderEvent::IntersectNotFound { .. } => {
+                bail!("Client::connect_with_retry should have already resolved this")
             }
         }
     }
@@ -324,6 +346,7 @@ pub fn apply_loop(
                 decoded,
                 block_no,
                 peer_tip_block_no,
+                header_cbor,
             } => {
                 let depth = depth(peer_tip_block_no, block_no);
 
@@ -369,6 +392,8 @@ pub fn apply_loop(
                         }
                     }
                 }
+
+                store::set_resume_header(conn, &header_cbor)?;
 
                 stats.applied += 1;
                 stats.last_block_no = block_no;
@@ -417,11 +442,10 @@ pub fn apply_loop(
 /// Runs `fetch_loop` and `apply_loop` concurrently (fetch on a tokio task,
 /// apply on a blocking task, connected by a bounded channel) until
 /// `max_blocks` applies have happened or the peer connection ends.
-#[instrument(skip(point, conn, health, cfg), fields(addr, magic))]
+#[instrument(skip(conn, health, cfg), fields(addr, magic))]
 pub async fn run(
     addr: String,
     magic: u64,
-    point: Point,
     mut conn: Connection,
     max_blocks: Option<u64>,
     cfg: ModeConfig,
@@ -429,15 +453,25 @@ pub async fn run(
 ) -> Result<(ApplyStats, Connection)> {
     let (tx, rx) = mpsc::channel(32);
 
-    let fetch_task = tokio::spawn(async move { fetch_loop(&addr, magic, point, tx, cfg).await });
-    let stats = tokio::task::spawn_blocking(move || {
+    // Resolve the resume point (cached header, bootstrap fetch, or Origin)
+    // up front, on `conn`, before it moves into the blocking apply task
+    // below -- `fetch_loop` itself never touches the DB.
+    let resume = resolve_resume(&addr, magic, &conn).await?;
+
+    // `Client::connect_with_retry`'s future isn't `Send` (amaru-pure-stage
+    // internals), so it can't be `tokio::spawn`'d like `fetch_loop` used to
+    // be with pallas-network. Run it directly on this task instead, joined
+    // with the (separately-spawned, since it's blocking) apply task --
+    // dropping `rx` (apply_loop returning) still makes fetch_loop's next
+    // send fail and return `Ok(())`, same as before.
+    let apply_task = tokio::task::spawn_blocking(move || {
         let stats = apply_loop(&mut conn, rx, max_blocks, cfg, health.as_deref());
         stats.map(|s| (s, conn))
-    })
-    .await??;
+    });
+    let fetch_fut = fetch_loop(&addr, magic, resume, tx, cfg);
 
-    // Dropping rx above (apply_loop returning) makes fetch_loop's next send
-    // fail and return Ok(()); if it errored instead, surface that here.
-    fetch_task.await??;
+    let (apply_result, fetch_result) = tokio::join!(apply_task, fetch_fut);
+    let stats = apply_result??;
+    fetch_result?;
     Ok(stats)
 }

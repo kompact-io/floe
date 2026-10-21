@@ -13,7 +13,10 @@ pub struct KeyInfo {
     pub vkh: String,
 }
 
-pub fn key_info(skey: [u8; 32], network: amaru_kernel::network::Network) -> anyhow::Result<KeyInfo> {
+pub fn key_info(
+    skey: [u8; 32],
+    network: amaru_kernel::network::Network,
+) -> anyhow::Result<KeyInfo> {
     let vk = SigningKey::from_bytes(&skey).verifying_key();
     let pay_hash = Hasher::<224>::hash(vk.as_bytes());
     let address = Address::Shelley(ShelleyAddress::new(

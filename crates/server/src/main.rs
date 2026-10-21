@@ -13,7 +13,6 @@ use floe::ingest::{seed, store, sync};
 use floe::metrics::Scheme;
 #[cfg(feature = "grpc")]
 use floe::serve::scheme::grpc;
-use pallas_network::miniprotocols::Point;
 use rusqlite::Connection;
 use tracing::{error, info, instrument};
 use tracing_subscriber::EnvFilter;
@@ -292,14 +291,8 @@ fn run(args: RunArgs) -> Result<()> {
             unreachable!("pending future never resolves");
         };
 
-        let point = match store::tip(&conn)? {
-            Some((slot, hash)) => Point::Specific(slot, hash.to_vec()),
-            None => Point::Origin,
-        };
-
         info!(mode = ?store::get_mode(&conn)?, "connecting");
-        let (stats, _conn) =
-            sync::run(peer, args.magic, point, conn, None, cfg, Some(health)).await?;
+        let (stats, _conn) = sync::run(peer, args.magic, conn, None, cfg, Some(health)).await?;
         info!(
             applied = stats.applied,
             rolled_back = stats.rolled_back,

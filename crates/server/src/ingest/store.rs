@@ -272,6 +272,38 @@ pub fn tip(conn: &Connection) -> Result<Option<(u64, [u8; 32])>> {
     Ok(row.map(|(slot, hash)| (slot, hash.try_into().expect("hash column must be 32 bytes"))))
 }
 
+/// The current tip's own header, as re-encoded CBOR bytes -- so a restart
+/// can resume chain-sync from a real `amaru_kernel::Header` (needed by
+/// `amaru-protocols`' chain-sync initiator: it intersects by sampling from a
+/// stored header whose own hash it recomputes, see
+/// `floe_n2n::resume::seed_chain_store`) instead of just the `(slot, hash)`
+/// pair `tip()` returns, which isn't enough on its own.
+///
+/// Lives in `meta` (the free-form k/v table already used for `mode`/`seed`),
+/// not a new `block` column -- a column would need threading through
+/// `BlockMeta`/`insert_block_row`/`apply`'s many call sites (production and
+/// test) for a field only the resume path needs. Not transactionally tied to
+/// `block`'s own tip row: if a crash lands between the two writes, the
+/// stored header is simply one block behind the real tip, which chain-sync
+/// then just rolls forward again normally -- no consistency hazard, since
+/// the resume point is always derived from whichever header this actually
+/// holds, never asserted against a separately-tracked tip.
+pub fn get_resume_header(conn: &Connection) -> Result<Option<Vec<u8>>> {
+    Ok(conn
+        .query_row("SELECT v FROM meta WHERE k = 'resume_header'", [], |r| {
+            r.get(0)
+        })
+        .optional()?)
+}
+
+pub fn set_resume_header(conn: &Connection, header_cbor: &[u8]) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(k, v) VALUES ('resume_header', ?1)",
+        params![header_cbor],
+    )?;
+    Ok(())
+}
+
 /// Continuity is the caller's job. `INSERT OR IGNORE` so re-writing the
 /// same checkpoint (e.g. a retried `flush`) is a no-op, not a `PRIMARY
 /// KEY` error.

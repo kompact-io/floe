@@ -60,6 +60,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
 use std::time::Duration;
 
+use amaru_kernel::Hash;
+use amaru_kernel::address::Address;
+use amaru_kernel::cardano::multiasset::{Assets, Multiasset};
+use amaru_kernel::cardano::positive_coin::PositiveCoin;
 use floe::ingest::catchup::Engine;
 use floe::ingest::decode::{DatumKind, DatumRow, DecodedBlock, OutputRef, ScriptRow, TxRow, Utxo};
 use floe::ingest::store::{self, BlockMeta};
@@ -68,10 +72,6 @@ use floe_dto_http::cardano::ScriptLang;
 use floe_dto_http::query::{
     ReadDataRequest, ReadTxRequest, ReadUtxosRequest, SearchUtxosRequest, TxoRef,
 };
-use amaru_kernel::address::Address;
-use amaru_kernel::cardano::multiasset::{Assets, Multiasset};
-use amaru_kernel::cardano::positive_coin::PositiveCoin;
-use amaru_kernel::Hash;
 use rusqlite::Connection;
 
 struct TempDb(PathBuf);
@@ -134,7 +134,10 @@ fn asset_cbor() -> Vec<u8> {
         PositiveCoin::try_from(ASSET_QTY).unwrap(),
     );
     let mut multiasset = BTreeMap::new();
-    multiasset.insert(Hash::<28>::from(ASSET_POLICY), Assets::try_from(assets).unwrap());
+    multiasset.insert(
+        Hash::<28>::from(ASSET_POLICY),
+        Assets::try_from(assets).unwrap(),
+    );
     let multiasset: Multiasset<PositiveCoin> = multiasset.into();
     amaru_kernel::to_cbor(&multiasset)
 }

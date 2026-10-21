@@ -220,6 +220,15 @@ impl Engine {
         self.flush(conn)?;
         store::create_secondary_indexes(conn)?;
         store::sweep(conn)?;
+        // `create_secondary_indexes`/`sweep` are the single biggest write
+        // burst in the process's life (4 indexes over a multi-million-row
+        // `utxo` table) -- `flush`'s own checkpoint, just above, ran before
+        // either of them. Nothing in running mode calls `wal_checkpoint`
+        // (`store::apply`/`store::prune` don't), so without this the WAL
+        // left behind by that burst sits unchecked for the rest of the
+        // process's life. Confirmed live: an otherwise-idle instance's WAL
+        // was still exactly its post-index-build size 40s into running mode.
+        store::wal_checkpoint(conn)?;
         store::set_mode(conn, Mode::Running)?;
         info!("switched to running mode");
         Ok(())

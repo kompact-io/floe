@@ -167,7 +167,9 @@ enum RawNativeScript {
     InvalidAfter(u64),
 }
 
-impl<'b, C: amaru_kernel::cbor::HasProtocolVersion> amaru_kernel::cbor::Decode<'b, C> for RawNativeScript {
+impl<'b, C: amaru_kernel::cbor::HasProtocolVersion> amaru_kernel::cbor::Decode<'b, C>
+    for RawNativeScript
+{
     fn decode(
         d: &mut amaru_kernel::cbor::Decoder<'b>,
         ctx: &mut C,

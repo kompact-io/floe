@@ -17,9 +17,9 @@
 //! cargo run -p floe-client -- key-info --skey <ed25519_skey_hex> [--network <network>] [--output-json]
 //! ```
 
+use amaru_kernel::address::Address;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use amaru_kernel::address::Address;
 
 use floe_client::{Backend, Hash28, NetworkArg, SchemeArgs, TxHash, parse_hex};
 use floe_dto_http::query::{

@@ -41,8 +41,8 @@ impl std::str::FromStr for NetworkArg {
 pub fn shelley_hashes(
     addr: &amaru_kernel::address::Address,
 ) -> anyhow::Result<(Hash28, Option<Hash28>)> {
-    use amaru_kernel::address::{Address, StakeReference};
     use amaru_kernel::AsHash;
+    use amaru_kernel::address::{Address, StakeReference};
 
     let Address::Shelley(s) = addr else {
         anyhow::bail!("address has no payment hash floe could have indexed (Byron/Stake)");

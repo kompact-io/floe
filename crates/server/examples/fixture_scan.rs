@@ -152,16 +152,23 @@ async fn main() -> Result<()> {
                         for i in consumed {
                             spent_here.push((*i.transaction_id, i.index as u64));
                         }
-                        let produced: Vec<(u64, &amaru_kernel::cardano::memoized::MemoizedTransactionOutput)> =
-                            if tx.is_expected_valid {
-                                tx.body.outputs.iter().enumerate().map(|(i, o)| (i as u64, o)).collect()
-                            } else {
-                                tx.body
-                                    .collateral_return
-                                    .as_deref()
-                                    .map(|o| vec![(tx.body.outputs.len() as u64, o)])
-                                    .unwrap_or_default()
-                            };
+                        let produced: Vec<(
+                            u64,
+                            &amaru_kernel::cardano::memoized::MemoizedTransactionOutput,
+                        )> = if tx.is_expected_valid {
+                            tx.body
+                                .outputs
+                                .iter()
+                                .enumerate()
+                                .map(|(i, o)| (i as u64, o))
+                                .collect()
+                        } else {
+                            tx.body
+                                .collateral_return
+                                .as_deref()
+                                .map(|o| vec![(tx.body.outputs.len() as u64, o)])
+                                .unwrap_or_default()
+                        };
                         for (ix, o) in produced {
                             created_here.insert((tx_hash, ix));
                             match &o.datum {

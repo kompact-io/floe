@@ -20,13 +20,13 @@
 //! usage: cargo run --release --example synth_fixtures
 //! writes: tests/data/fixture_synthetic.block.hex
 
+use amaru_kernel::MemoizedPlutusData;
 use amaru_kernel::address::Address;
 use amaru_kernel::cardano::block::Block;
 use amaru_kernel::cardano::era_name::EraName;
 use amaru_kernel::cardano::fixed_bytes::FixedBytes;
 use amaru_kernel::cardano::header::{Header, KesSignature};
 use amaru_kernel::cardano::header_body::HeaderBody;
-use amaru_kernel::MemoizedPlutusData;
 use amaru_kernel::cardano::memoized::{MemoizedDatum, MemoizedTransactionOutput};
 use amaru_kernel::cardano::operational_cert::OperationalCert;
 use amaru_kernel::cardano::plutus_data::{BigInt, PlutusData};
@@ -37,7 +37,9 @@ use amaru_kernel::cardano::transaction_input::TransactionInput;
 use amaru_kernel::cardano::value::Value;
 use amaru_kernel::cardano::vrf_cert::{VRF_PROOF, VrfCert};
 use amaru_kernel::cardano::witness_set::WitnessSet;
-use amaru_kernel::{Bytes, Ed25519Signature, Hash, Int, KesPeriod, NonEmptyVec, VerificationKey, cbor};
+use amaru_kernel::{
+    Bytes, Ed25519Signature, Hash, Int, KesPeriod, NonEmptyVec, VerificationKey, cbor,
+};
 
 fn address(tail: u8) -> Address {
     // Enterprise key address (type id 0b0110), testnet network id 0: header
@@ -64,7 +66,8 @@ fn input(tail: u8, ix: u16) -> TransactionInput {
 /// can't be built directly.
 fn witness_set_with_plutus_data(tag: i64) -> WitnessSet {
     let datum = PlutusData::int(BigInt::Int(Int::from(tag)));
-    let datums: NonEmptyVec<MemoizedPlutusData> = NonEmptyVec::singleton(MemoizedPlutusData::new(datum));
+    let datums: NonEmptyVec<MemoizedPlutusData> =
+        NonEmptyVec::singleton(MemoizedPlutusData::new(datum));
 
     let mut buf = Vec::new();
     let mut ctx = ();
@@ -100,15 +103,26 @@ fn transaction_body(
         e.u8(1).unwrap().encode_with(&outputs, &mut ctx).unwrap();
         e.u8(2).unwrap().encode_with(fee, &mut ctx).unwrap();
         if let Some(collateral) = &collateral {
-            let collateral: amaru_kernel::VecSet<TransactionInput> =
-                collateral.clone().try_into().expect("collateral has no duplicates");
-            e.u8(13).unwrap().encode_with(&collateral, &mut ctx).unwrap();
+            let collateral: amaru_kernel::VecSet<TransactionInput> = collateral
+                .clone()
+                .try_into()
+                .expect("collateral has no duplicates");
+            e.u8(13)
+                .unwrap()
+                .encode_with(&collateral, &mut ctx)
+                .unwrap();
         }
         if let Some(collateral_return) = &collateral_return {
-            e.u8(16).unwrap().encode_with(collateral_return, &mut ctx).unwrap();
+            e.u8(16)
+                .unwrap()
+                .encode_with(collateral_return, &mut ctx)
+                .unwrap();
         }
         if let Some(total_collateral) = total_collateral {
-            e.u8(17).unwrap().encode_with(total_collateral, &mut ctx).unwrap();
+            e.u8(17)
+                .unwrap()
+                .encode_with(total_collateral, &mut ctx)
+                .unwrap();
         }
         e.end().unwrap();
     }
@@ -202,7 +216,10 @@ fn main() -> anyhow::Result<()> {
     assert_eq!(decoded.transaction_bodies.len(), 2);
     let tx_count = (&decoded).into_iter().count();
     assert_eq!(tx_count, 2);
-    let valid_flags: Vec<bool> = (&decoded).into_iter().map(|(_, tx)| tx.is_expected_valid).collect();
+    let valid_flags: Vec<bool> = (&decoded)
+        .into_iter()
+        .map(|(_, tx)| tx.is_expected_valid)
+        .collect();
     assert_eq!(valid_flags, vec![true, false]);
 
     std::fs::create_dir_all("tests/data")?;

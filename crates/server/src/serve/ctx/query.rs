@@ -768,11 +768,10 @@ mod tests {
         resolved_out.datum_hash = Some(resolved_hash);
 
         let script_cbor = vec![0xEEu8; 4];
-        let script_hash: [u8; 28] =
-            amaru_kernel::Hasher::<224>::hash_tagged(&script_cbor, 0)
-                .as_ref()
-                .try_into()
-                .unwrap();
+        let script_hash: [u8; 28] = amaru_kernel::Hasher::<224>::hash_tagged(&script_cbor, 0)
+            .as_ref()
+            .try_into()
+            .unwrap();
         let mut script_out = utxo(0x04);
         script_out.script_hash = Some(script_hash);
 

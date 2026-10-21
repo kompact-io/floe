@@ -106,7 +106,10 @@ pub(crate) fn hash_bytes<const N: usize>(h: impl AsRef<[u8]>) -> [u8; N] {
 /// collapses to `vec![]` -- `TxRow` has no use for the distinction from
 /// an explicitly empty set, same as every other "absent" case here.
 fn required_signers(body: &TransactionBody) -> Vec<[u8; 28]> {
-    body.required_signers.as_ref().map(|rs| rs.iter().map(hash_bytes).collect()).unwrap_or_default()
+    body.required_signers
+        .as_ref()
+        .map(|rs| rs.iter().map(hash_bytes).collect())
+        .unwrap_or_default()
 }
 
 /// `(pay_hash, stake_hash, address_header)`. `pay_hash` is `None` only

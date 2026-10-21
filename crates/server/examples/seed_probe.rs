@@ -345,15 +345,16 @@ async fn collect(
                             })
                             .collect(),
                     );
-                    let spent: Vec<&amaru_kernel::cardano::transaction_input::TransactionInput> = if valid {
-                        tx.body.inputs.iter().collect()
-                    } else {
-                        tx.body
-                            .collateral
-                            .as_ref()
-                            .map(|c| c.iter().collect())
-                            .unwrap_or_default()
-                    };
+                    let spent: Vec<&amaru_kernel::cardano::transaction_input::TransactionInput> =
+                        if valid {
+                            tx.body.inputs.iter().collect()
+                        } else {
+                            tx.body
+                                .collateral
+                                .as_ref()
+                                .map(|c| c.iter().collect())
+                                .unwrap_or_default()
+                        };
                     for i in spent {
                         ninputs += 1;
                         let k = key_of(i.transaction_id.as_ref(), i.index as u64);

@@ -4,6 +4,7 @@ members = [
   "crates/client",
   "crates/dto-grpc",
   "crates/dto-http",
+  "crates/n2n",
   "crates/integration",
   "crates/server",
 ]
@@ -29,14 +30,16 @@ axum = "0.8"
 axum-extra = { version = "0.10", features = ["query"] }
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
-floe-client = { path = "crates/client" }
-floe-dto-grpc = { path = "crates/dto-grpc" }
-floe-dto-http = { path = "crates/dto-http" }
-floe-server = { path = "crates/server" }
+futures-util = "0.3"
 http = "1"
 minicbor = { version = "2.3.0", features = ["derive", "alloc", "half"] }
 pallas-network = "1.4"
-amaru-kernel = { git = "https://github.com/kompact-io/amaru", rev = "4774c0ef03da598a8b2bf9b89299135080f7c3fe" }
+amaru-kernel = { git = "https://github.com/kompact-io/amaru", branch = "nix-proper" }
+amaru-network = { git = "https://github.com/kompact-io/amaru", branch = "nix-proper" }
+amaru-ouroboros = { git = "https://github.com/kompact-io/amaru", branch = "nix-proper" }
+amaru-ouroboros-traits = { git = "https://github.com/kompact-io/amaru", branch = "nix-proper" }
+amaru-protocols = { git = "https://github.com/kompact-io/amaru", branch = "nix-proper" }
+amaru-pure-stage = { git = "https://github.com/kompact-io/amaru", branch = "nix-proper" }
 proptest = "1"
 rayon = "1"
 # rustls backend, not native-tls -- no OpenSSL/system-TLS dependency,
@@ -63,3 +66,10 @@ wasm-bindgen = "=0.2.129" # must match nix
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3"
 zstd = "0.14"
+
+# WORKSPACE #
+floe-client = { path = "crates/client" }
+floe-dto-grpc = { path = "crates/dto-grpc" }
+floe-dto-http = { path = "crates/dto-http" }
+floe-n2n = { path = "crates/n2n" }
+floe-server = { path = "crates/server" }

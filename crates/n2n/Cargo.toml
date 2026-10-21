@@ -1,0 +1,25 @@
+[package]
+name = "floe-n2n"
+version.workspace = true
+edition.workspace = true
+description = "Single-peer Cardano node-to-node client (handshake, pipelined chainsync + blockfetch) built on amaru-protocols/amaru-pure-stage, without amaru's connection-manager/gossip layer"
+
+[dependencies]
+anyhow = { workspace = true }
+futures-util = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+amaru-kernel = { workspace = true }
+amaru-network = { workspace = true }
+amaru-ouroboros = { workspace = true }
+amaru-ouroboros-traits = { workspace = true }
+amaru-protocols = { workspace = true }
+amaru-pure-stage = { workspace = true }
+
+[dev-dependencies]
+amaru-kernel = { workspace = true, features = ["test-utils"] }
+pallas-network = { workspace = true }
+tracing-subscriber = { workspace = true }

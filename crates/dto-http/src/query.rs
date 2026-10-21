@@ -27,13 +27,13 @@
 //! `ReadDataRequest.key` vs. `ReadTxRequest.hash` -- that asymmetry is
 //! the gRPC proto's own, not introduced here).
 
+use amaru_kernel::address::Address as KernelAddress;
 #[cfg(feature = "cbor")]
 use minicbor::decode::{Decoder, Error as DecodeError};
 #[cfg(feature = "cbor")]
 use minicbor::encode::{Encoder, Error as EncodeError, Write as CborWrite};
 #[cfg(feature = "cbor")]
 use minicbor::{Decode, Encode};
-use amaru_kernel::address::Address as KernelAddress;
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;
 #[cfg(feature = "json")]
@@ -136,7 +136,10 @@ impl<Ctx> Encode<Ctx> for Address {
 #[cfg(feature = "cbor")]
 impl<'b, Ctx> Decode<'b, Ctx> for Address {
     fn decode(d: &mut Decoder<'b>, _ctx: &mut Ctx) -> Result<Self, DecodeError> {
-        let addr = d.str()?.parse().map_err(|_| DecodeError::message("invalid address"))?;
+        let addr = d
+            .str()?
+            .parse()
+            .map_err(|_| DecodeError::message("invalid address"))?;
         Ok(Address(addr))
     }
 }

@@ -21,8 +21,8 @@ mod query;
 
 use std::sync::Arc;
 
-use anyhow::Result;
 use amaru_kernel::address::Address;
+use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::health::Health;
