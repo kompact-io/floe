@@ -11,7 +11,6 @@
 //! hardcoded to `Effects<ConnectionMessage>` -- not because we want anything
 //! else `connection.rs` does.
 
-
 use amaru_kernel::NetworkMagic;
 use amaru_ouroboros::ConnectionId;
 use amaru_protocols::{

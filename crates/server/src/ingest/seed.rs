@@ -207,7 +207,7 @@ pub fn stream_into(
 
     let mut batch: Vec<([u8; 32], u16, Vec<u8>)> = Vec::with_capacity(BATCH_ROWS);
 
-    tvar::for_each_entry(reader, |key : &[u8; 34], val : &[u8] | {
+    tvar::for_each_entry(reader, |key: &[u8; 34], val: &[u8]| {
         let (txid, ix) = tvar::split_key(key);
         let tx_hash: [u8; 32] = txid.try_into().expect("tvar key's txid is 32 bytes");
         batch.push((tx_hash, ix, val.to_vec()));

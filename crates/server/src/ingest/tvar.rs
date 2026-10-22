@@ -9,6 +9,7 @@ use std::io::{BufReader, Read};
 
 use anyhow::{Result, bail};
 
+// FIXME :: Using `<KEY_LEN>` fails. Value inlined/ hardcoded
 pub const KEY_LEN: usize = 34;
 const MAX_VALUE_LEN: usize = 1 << 24;
 
@@ -64,7 +65,7 @@ fn bytes_len<R: Read>(r: &mut R, first: u8) -> Result<usize> {
 pub fn for_each_entry<R, F>(r: R, mut f: F) -> Result<u64>
 where
     R: Read,
-    F: FnMut(&[u8; KEY_LEN], &[u8]) -> Result<bool>,
+    F: FnMut(&[u8; 34], &[u8]) -> Result<bool>,
 {
     let mut r = BufReader::with_capacity(1 << 20, r);
 
@@ -132,7 +133,7 @@ mod tests {
     #[test]
     fn first_real_entry() {
         let mut got = None;
-        let _ = for_each_entry(HEAD, |k, v| {
+        let _ = for_each_entry(HEAD, |k: &[u8; 34], v: &[u8]| {
             got = Some((*k, v.to_vec()));
             Ok(false)
         })

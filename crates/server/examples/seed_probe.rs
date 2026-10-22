@@ -142,7 +142,7 @@ fn main() -> Result<()> {
             let mut prev = [0u8; KEY_LEN];
             let mut shown = 0;
             let mut shown_kinds = [false; 4]; // inline datum, script ref, datum hash, addr28 form
-            tvar::for_each_entry(&mut e, |key, val| {
+            tvar::for_each_entry(&mut e, |key: &[u8; 34], val: &[u8]| {
                 st.entries += 1;
                 st.max_value_len = st.max_value_len.max(val.len());
                 st.sum_value_len += val.len() as u64;

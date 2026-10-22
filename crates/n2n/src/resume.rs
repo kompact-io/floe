@@ -26,7 +26,10 @@ use amaru_ouroboros_traits::stores::chain_store::InMemoryChainStore;
 
 /// This header's own point: slot + hash + block height.
 pub fn point_of(header: &Header) -> Point {
-    Point::new(NetworkPoint::Specific(header.slot(), header.hash()), header.block_height())
+    Point::new(
+        NetworkPoint::Specific(header.slot(), header.hash()),
+        header.block_height(),
+    )
 }
 
 /// Where to resume chain-sync from.

@@ -75,10 +75,10 @@ floe-n2n = { path = "crates/n2n" }
 floe-server = { path = "crates/server" }
 
 [profile.release]
-lto = false
+lto = true
 
-[profile.release.package.amaru-pure-stage]
-opt-level = 0
+# [profile.release.package.amaru-pure-stage]
+# opt-level = 0
 
 # # Lower optimization level strictly for the typestate macro crates
 # [profile.release.package.amaru-pure-stage]
