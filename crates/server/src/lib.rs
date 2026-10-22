@@ -1,7 +1,9 @@
 //! floe
 
 // VOODOO COMPILER MAGIC
-#![feature(generic_const_exprs, const_type_name, unsized_const_params, adt_const_params)]
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)]
+
 
 pub mod health;
 pub mod ingest;

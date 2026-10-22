@@ -12,7 +12,13 @@ use anyhow::{Result, bail};
 pub const KEY_LEN: usize = 34;
 const MAX_VALUE_LEN: usize = 1 << 24;
 
-pub fn split_key(key: &[u8; KEY_LEN]) -> (&[u8], u16) {
+// /// DOES NOT COMPILE.
+// pub fn split_key(key: &[u8; KEY_LEN]) -> (&[u8], u16) {
+//     (&key[..32], u16::from_be_bytes([key[32], key[33]]))
+// }
+
+/// DOES COMPILE.
+pub fn split_key(key: &[u8; 34]) -> (&[u8], u16) {
     (&key[..32], u16::from_be_bytes([key[32], key[33]]))
 }
 

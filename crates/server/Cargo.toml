@@ -24,31 +24,31 @@ http-json = []
 http-cbor = []
 
 [dependencies]
+amaru-kernel = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
 axum-extra = { workspace = true , optional = true } # FIXME : Required?
 clap = { workspace = true }
-hex = { workspace = true }
 floe-dto-grpc = { workspace = true, optional = true }
 floe-dto-http = { workspace = true, features = ["json", "cbor", "metrics"] }
+floe-n2n = { workspace = true }
+hex = { workspace = true }
 http = { workspace = true }
 minicbor = { workspace = true }
 pallas-network = { workspace = true }
-amaru-kernel = { workspace = true }
-floe-n2n = { workspace = true }
 rayon = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tar = { workspace = true }
+tikv-jemalloc-ctl = { workspace = true }
+tikv-jemallocator = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true, optional = true }
 tower = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 zstd = { workspace = true }
-tikv-jemallocator = { workspace = true }
-tikv-jemalloc-ctl = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

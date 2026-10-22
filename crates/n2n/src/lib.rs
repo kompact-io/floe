@@ -20,7 +20,10 @@
 //! waits to be told to by this stage.
 
 // VOODOO COMPILER MAGIC
+#![allow(incomplete_features)]
 #![feature(generic_const_exprs, const_type_name, unsized_const_params, adt_const_params)]
+#![recursion_limit = "512"]
+
 
 pub mod client;
 pub mod orchestrator;

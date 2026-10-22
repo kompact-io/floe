@@ -73,3 +73,16 @@ floe-dto-grpc = { path = "crates/dto-grpc" }
 floe-dto-http = { path = "crates/dto-http" }
 floe-n2n = { path = "crates/n2n" }
 floe-server = { path = "crates/server" }
+
+[profile.release]
+lto = false
+
+[profile.release.package.amaru-pure-stage]
+opt-level = 0
+
+# # Lower optimization level strictly for the typestate macro crates
+# [profile.release.package.amaru-pure-stage]
+# opt-level = 1
+# 
+# [profile.release.package.amaru-protocols]
+# opt-level = 1
