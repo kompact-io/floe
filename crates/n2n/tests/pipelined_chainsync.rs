@@ -164,7 +164,8 @@ async fn pipelined_chainsync_and_blockfetch_pull_from_mock_peer() -> anyhow::Res
     let mut headers_seen = 0u64;
     let mut rollbacks_seen = 0u64;
     let mut first_point = None;
-    let mut last_point = None;
+    // clippy unhappy with unused var
+    let mut _last_point = None;
     loop {
         match tokio::time::timeout(Duration::from_secs(10), client.next_header())
             .await
@@ -174,7 +175,7 @@ async fn pipelined_chainsync_and_blockfetch_pull_from_mock_peer() -> anyhow::Res
                 headers_seen += 1;
                 let point = floe_n2n::resume::point_of(&header);
                 first_point.get_or_insert(point);
-                last_point = Some(point);
+                _last_point = Some(point);
                 if headers_seen >= HEADER_LIMIT {
                     break;
                 }
@@ -196,7 +197,7 @@ async fn pipelined_chainsync_and_blockfetch_pull_from_mock_peer() -> anyhow::Res
 
     let (from, through) = (
         first_point.expect("saw headers"),
-        last_point.expect("saw headers"),
+        _last_point.expect("saw headers"),
     );
     let blocks = tokio::time::timeout(Duration::from_secs(10), client.fetch_bodies(from, through))
         .await
