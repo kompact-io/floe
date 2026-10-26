@@ -6,7 +6,7 @@
 //! which pallas-network's lock-step `Client` cannot do -- see
 //! `plan-amaru-migration.md`). `pallas-network` is no longer a dependency of
 //! `floe-server`'s production path at all: the one place it used to survive,
-//! [`fetch_header_via_blockfetch`] (a one-shot bootstrap used only when
+//! `fetch_header_via_blockfetch` (a one-shot bootstrap used only when
 //! there's no cached resume header yet), now goes through
 //! `floe_n2n::single_fetch::fetch_block` -- a blockfetch-only dial that
 //! skips chain-sync entirely, since chain-sync has no equivalent bootstrap
