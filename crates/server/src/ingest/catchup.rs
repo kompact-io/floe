@@ -49,11 +49,9 @@ fn script_bytes(s: &ScriptRow) -> usize {
 
 /// The pending-changes buffer for the current chunk, plus the continuity
 /// state that must survive across flushes.
-/// `(slot, required_signers)` -- buffered per pending tx until flush.
-type TxSlotAndSigners = (u64, Vec<[u8; 28]>);
-
 pub struct Engine {
-    txs: HashMap<TxHash, TxSlotAndSigners>,
+    /// Slot of each pending tx, keyed by hash -- buffered until flush.
+    txs: HashMap<TxHash, u64>,
     created: HashMap<OutputRef, (u64, Utxo)>,
     tombstones: Vec<OutputRef>,
     datums: HashMap<[u8; 32], (u64, DatumRow)>,
@@ -65,6 +63,15 @@ pub struct Engine {
     last_hash: Option<[u8; 32]>,
     /// Last applied block; becomes the checkpoint row on the next flush.
     last_meta: Option<BlockMeta>,
+    /// `last_meta`'s own header, re-encoded CBOR -- written as
+    /// `resume_header` inside `flush`'s own transaction, atomically with
+    /// the checkpoint row. This is what makes a hard kill mid-catchup
+    /// (no graceful-shutdown path exists) safe to resume from: the cached
+    /// resume point can now never be ahead of what's actually committed,
+    /// so a restart at worst replays the still-buffered tail of the
+    /// current, never-flushed chunk -- it can no longer land on a
+    /// "continuity violation" against its own resume cursor.
+    last_header_cbor: Option<Vec<u8>>,
 }
 
 impl Engine {
@@ -81,6 +88,7 @@ impl Engine {
             blocks_in_chunk: 0,
             last_hash: tip.map(|(_, hash)| hash),
             last_meta: None,
+            last_header_cbor: None,
         }
     }
 
@@ -103,7 +111,12 @@ impl Engine {
     ///
     /// Lossy for a future lineage feature (a cancelled output never
     /// existed as far as the DB is concerned); revisit before lineage lands.
-    pub fn apply_block(&mut self, meta: BlockMeta, decoded: &DecodedBlock) -> Result<()> {
+    pub fn apply_block(
+        &mut self,
+        meta: BlockMeta,
+        decoded: &DecodedBlock,
+        header_cbor: Option<&[u8]>,
+    ) -> Result<()> {
         if let Some(last_hash) = self.last_hash
             && last_hash != meta.prev_hash
         {
@@ -117,9 +130,8 @@ impl Engine {
 
         for t in &decoded.txs {
             if !self.txs.contains_key(&t.hash) {
-                self.bytes += size_of::<TxHash>() + t.required_signers.len() * 28;
-                self.txs
-                    .insert(t.hash, (meta.slot, t.required_signers.clone()));
+                self.bytes += size_of::<TxHash>();
+                self.txs.insert(t.hash, meta.slot);
             }
         }
         for u in &decoded.created {
@@ -150,6 +162,9 @@ impl Engine {
         self.blocks_in_chunk += 1;
         self.last_hash = Some(meta.hash);
         self.last_meta = Some(meta);
+        if let Some(h) = header_cbor {
+            self.last_header_cbor = Some(h.to_vec());
+        }
         Ok(())
     }
 
@@ -168,10 +183,10 @@ impl Engine {
             store::delete_utxo(&tx, r)?;
         }
 
-        let mut txs: Vec<(TxHash, TxSlotAndSigners)> = self.txs.drain().collect();
+        let mut txs: Vec<(TxHash, u64)> = self.txs.drain().collect();
         txs.sort();
-        for (hash, (slot, required_signers)) in &txs {
-            store::insert_tx(&tx, *slot, hash, required_signers)?;
+        for (hash, slot) in &txs {
+            store::insert_tx(&tx, *slot, hash)?;
         }
 
         let mut created: Vec<(u64, Utxo)> = self.created.drain().map(|(_, v)| v).collect();
@@ -193,6 +208,9 @@ impl Engine {
         }
 
         store::insert_block_row(&tx, &meta)?;
+        if let Some(header_cbor) = &self.last_header_cbor {
+            store::set_resume_header(&tx, header_cbor)?;
+        }
         tx.commit()?;
 
         store::wal_checkpoint(conn)?;
@@ -282,19 +300,10 @@ mod tests {
     }
 
     fn decoded_block(creates: &[OutputRef], spends: &[OutputRef]) -> DecodedBlock {
-        let mut txs: Vec<TxRow> = creates
-            .iter()
-            .map(|r| TxRow {
-                hash: r.tx_hash,
-                required_signers: vec![],
-            })
-            .collect();
+        let mut txs: Vec<TxRow> = creates.iter().map(|r| TxRow { hash: r.tx_hash }).collect();
         let spender = fresh_spender();
         if !spends.is_empty() {
-            txs.push(TxRow {
-                hash: spender,
-                required_signers: vec![],
-            });
+            txs.push(TxRow { hash: spender });
         }
         DecodedBlock {
             txs,
@@ -371,7 +380,7 @@ mod tests {
         let r = fresh_ref(&mut counter);
         let (meta, _) = block_meta(1, [0u8; 32]);
         engine
-            .apply_block(meta, &decoded_block(&[r], &[r]))
+            .apply_block(meta, &decoded_block(&[r], &[r]), None)
             .unwrap();
 
         assert_eq!(engine.pending_blocks(), 1);
@@ -392,7 +401,7 @@ mod tests {
         let r = fresh_ref(&mut counter);
         let (meta1, hash1) = block_meta(1, [0u8; 32]);
         engine
-            .apply_block(meta1, &decoded_block(&[r], &[]))
+            .apply_block(meta1, &decoded_block(&[r], &[]), None)
             .unwrap();
         engine.flush(&mut conn).unwrap();
 
@@ -400,7 +409,7 @@ mod tests {
 
         let (meta2, _) = block_meta(2, hash1);
         engine
-            .apply_block(meta2, &decoded_block(&[], &[r]))
+            .apply_block(meta2, &decoded_block(&[], &[r]), None)
             .unwrap();
         engine.flush(&mut conn).unwrap();
 
@@ -419,7 +428,9 @@ mod tests {
         for slot in 1..=5u64 {
             let (meta, hash) = block_meta(slot, prev_hash);
             prev_hash = hash;
-            engine.apply_block(meta, &decoded_block(&[], &[])).unwrap();
+            engine
+                .apply_block(meta, &decoded_block(&[], &[]), None)
+                .unwrap();
         }
         engine.flush(&mut conn).unwrap();
 
@@ -433,18 +444,63 @@ mod tests {
         assert_eq!(store::tip(&conn).unwrap(), Some((5, prev_hash)));
     }
 
+    /// No graceful-shutdown path exists (no SIGTERM/SIGINT handling at all)
+    /// -- a hard kill mid-chunk is the *normal* way this process stops
+    /// during catch-up, not an edge case. `resume_header` must never point
+    /// past the last flushed checkpoint, or a restart hits a continuity
+    /// violation resuming from a block that was never actually committed
+    /// (reproduced live against mindex-test on 2026-10-26: `systemctl
+    /// stop` mid-catchup left a cached header several thousand blocks
+    /// ahead of the real tip, and the next `floe run` exited immediately).
+    #[test]
+    fn resume_header_never_advances_past_the_last_flushed_checkpoint() {
+        let mut conn = fresh_db();
+        let mut engine = Engine::new(store::tip(&conn).unwrap());
+
+        let (meta1, hash1) = block_meta(1, [0u8; 32]);
+        engine
+            .apply_block(meta1, &decoded_block(&[], &[]), Some(b"header-1"))
+            .unwrap();
+        engine.flush(&mut conn).unwrap();
+        assert_eq!(
+            store::get_resume_header(&conn).unwrap(),
+            Some(b"header-1".to_vec())
+        );
+
+        // Buffered in memory, never flushed -- exactly what's lost on a
+        // hard kill right here.
+        let (meta2, _) = block_meta(2, hash1);
+        engine
+            .apply_block(meta2, &decoded_block(&[], &[]), Some(b"header-2"))
+            .unwrap();
+        assert_eq!(
+            store::get_resume_header(&conn).unwrap(),
+            Some(b"header-1".to_vec()),
+            "resume_header must still match the durable checkpoint, not the buffered block"
+        );
+
+        engine.flush(&mut conn).unwrap();
+        assert_eq!(
+            store::get_resume_header(&conn).unwrap(),
+            Some(b"header-2".to_vec()),
+            "a real flush must advance resume_header to match"
+        );
+    }
+
     #[test]
     fn in_memory_continuity_violation_is_rejected_without_touching_disk() {
         let mut conn = fresh_db();
         let mut engine = Engine::new(store::tip(&conn).unwrap());
 
         let (meta1, _hash1) = block_meta(1, [0u8; 32]);
-        engine.apply_block(meta1, &decoded_block(&[], &[])).unwrap();
+        engine
+            .apply_block(meta1, &decoded_block(&[], &[]), None)
+            .unwrap();
 
         let (bad_meta, _) = block_meta(2, [0xFFu8; 32]); // wrong prev_hash
         assert!(
             engine
-                .apply_block(bad_meta, &decoded_block(&[], &[]))
+                .apply_block(bad_meta, &decoded_block(&[], &[]), None)
                 .is_err()
         );
         // The rejected block must not have been folded into the buffer.
@@ -465,7 +521,9 @@ mod tests {
         let mut counter = 0;
         let r = fresh_ref(&mut counter);
         let (meta, _) = block_meta(1, [0u8; 32]);
-        engine.apply_block(meta, &decoded_block(&[r], &[])).unwrap();
+        engine
+            .apply_block(meta, &decoded_block(&[r], &[]), None)
+            .unwrap();
 
         // Simulate a crash partway through the switch: flush and create the
         // indexes, but stop before the sweep and the mode flip land.
@@ -500,13 +558,15 @@ mod tests {
         let mut engine = Engine::new(store::tip(&conn).unwrap());
 
         let (meta1, hash1) = block_meta(1, [0u8; 32]);
-        engine.apply_block(meta1, &decoded_block(&[], &[])).unwrap();
+        engine
+            .apply_block(meta1, &decoded_block(&[], &[]), None)
+            .unwrap();
         engine.switch_to_running(&mut conn).unwrap();
 
         // The running-mode path (a separate writer entirely) must see the
         // checkpoint the engine left behind and accept the next block.
         let (meta2, _) = block_meta(2, hash1);
-        store::apply(&mut conn, &meta2, &decoded_block(&[], &[])).unwrap();
+        store::apply(&mut conn, &meta2, &decoded_block(&[], &[]), None).unwrap();
         assert_eq!(store::tip(&conn).unwrap().unwrap().0, 2);
     }
 
@@ -525,7 +585,7 @@ mod tests {
         };
         let (meta1, hash1) = block_meta(1, [0u8; 32]);
         engine
-            .apply_block(meta1, &decoded_block(&[r], &[]))
+            .apply_block(meta1, &decoded_block(&[r], &[]), None)
             .unwrap();
         engine.switch_to_running(&mut conn).unwrap();
 
@@ -539,11 +599,11 @@ mod tests {
         // that the spend is unambiguously more than k=1 blocks deep.
         let mut prev_hash = hash1;
         let (meta2, hash2) = block_meta(2, prev_hash);
-        store::apply(&mut conn, &meta2, &decoded_block(&[], &[r])).unwrap();
+        store::apply(&mut conn, &meta2, &decoded_block(&[], &[r]), None).unwrap();
         prev_hash = hash2;
         for slot in 3..=6u64 {
             let (meta, hash) = block_meta(slot, prev_hash);
-            store::apply(&mut conn, &meta, &decoded_block(&[], &[])).unwrap();
+            store::apply(&mut conn, &meta, &decoded_block(&[], &[]), None).unwrap();
             prev_hash = hash;
         }
 
@@ -611,7 +671,7 @@ mod tests {
                 let (meta, hash) = block_meta(slot, prev_hash);
                 prev_hash = hash;
 
-                engine.apply_block(meta, &decoded_block(&creates, &spends)).unwrap();
+                engine.apply_block(meta, &decoded_block(&creates, &spends), None).unwrap();
                 model.apply(slot, &creates, &spends);
 
                 if *flush_now {

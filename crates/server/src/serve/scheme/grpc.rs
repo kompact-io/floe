@@ -370,7 +370,6 @@ fn any_chain_tx(t: Tx, block_ref: Option<BlockPoint>) -> Result<q::AnyChainTx> {
             hash: t.hash.to_vec(),
             proposals: vec![],
             votes: vec![],
-            required_signers: t.required_signers.iter().map(|h| h.to_vec()).collect(),
         })),
     })
 }
@@ -648,12 +647,7 @@ mod tests {
         store::init(&conn).unwrap();
         let addr = vec![0x61u8; 29];
         let decoded = DecodedBlock {
-            txs: (0..3u8)
-                .map(|i| TxRow {
-                    hash: [i; 32],
-                    required_signers: vec![],
-                })
-                .collect(),
+            txs: (0..3u8).map(|i| TxRow { hash: [i; 32] }).collect(),
             spent: Default::default(),
             created: (0..3u8).map(|i| utxo(i, addr.clone())).collect(),
             datums: vec![],
@@ -668,6 +662,7 @@ mod tests {
                 block_no: Some(1),
             },
             &decoded,
+            None,
         )
         .unwrap();
         Engine::new(store::tip(&conn).unwrap())
@@ -980,10 +975,7 @@ mod tests {
         let datum_hash = [0x42u8; 32];
         let datum_cbor = vec![1, 2, 3, 4];
         let decoded = DecodedBlock {
-            txs: vec![TxRow {
-                hash: [0u8; 32],
-                required_signers: vec![],
-            }],
+            txs: vec![TxRow { hash: [0u8; 32] }],
             spent: Default::default(),
             created: vec![Utxo {
                 output_ref: OutputRef {
@@ -1014,6 +1006,7 @@ mod tests {
                 block_no: Some(1),
             },
             &decoded,
+            None,
         )
         .unwrap();
         Engine::new(store::tip(&conn).unwrap())

@@ -410,20 +410,6 @@ pub struct Tx {
     pub outputs: Vec<TxOutput>,
     #[cfg_attr(feature = "cbor", n(4))]
     pub successful: bool,
-    /// Mirrors `cardano.Tx.required_signers` (floe's own addition,
-    /// filling a gap in UTxORPC spec v1 -- see that field's own proto
-    /// comment). Key hashes, not bech32: same raw-hash convention as
-    /// `TxInput.tx_hash`/`TxOutput.address`'s own parts.
-    #[cfg_attr(
-        feature = "json",
-        serde(
-            serialize_with = "crate::ser_hex_list",
-            deserialize_with = "crate::de_hex_vec_list"
-        )
-    )]
-    #[cfg_attr(feature = "schema", schemars(with = "Vec<String>"))]
-    #[cfg_attr(feature = "cbor", n(5))]
-    pub required_signers: Vec<Vec<u8>>,
 }
 
 /// `ReadTx`'s own route -- see `ReadTxRequest`/`ReadTxResponse`.

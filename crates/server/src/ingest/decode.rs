@@ -73,18 +73,12 @@ pub struct ScriptRow {
     pub cbor: Vec<u8>,
 }
 
-/// A tx's existence and parent block, plus `required_signers` -- no
-/// other body fields (no certs, mint, fee, ...). See
-/// `store::BASE_SCHEMA_SQL`'s `tx` table doc: this stays minimal by
-/// design, `required_signers` included deliberately rather than as a
-/// first step towards storing the rest of the tx body.
+/// A tx's existence and parent block -- no other body fields (no
+/// certs, mint, fee, ...). See `store::BASE_SCHEMA_SQL`'s `tx` table
+/// doc: this stays minimal by design.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxRow {
     pub hash: TxHash,
-    /// Empty for a tx with no `required_signers` field, or one
-    /// inherited from a seed snapshot (which carries no tx-body data
-    /// at all, not just this field -- see `seed.rs`).
-    pub required_signers: Vec<[u8; 28]>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -100,16 +94,6 @@ pub struct DecodedBlock {
 
 pub(crate) fn hash_bytes<const N: usize>(h: impl AsRef<[u8]>) -> [u8; N] {
     h.as_ref().try_into().expect("wrong hash length")
-}
-
-/// Absent (no CBOR field at all, every era floe decodes can omit it)
-/// collapses to `vec![]` -- `TxRow` has no use for the distinction from
-/// an explicitly empty set, same as every other "absent" case here.
-fn required_signers(body: &TransactionBody) -> Vec<[u8; 28]> {
-    body.required_signers
-        .as_ref()
-        .map(|rs| rs.iter().map(hash_bytes).collect())
-        .unwrap_or_default()
 }
 
 /// `(pay_hash, stake_hash, address_header)`. `pay_hash` is `None` only
@@ -179,10 +163,7 @@ fn decode_tx(
     out: &mut DecodedBlock,
 ) {
     let tx_hash: TxHash = hash_bytes(body.id());
-    out.txs.push(TxRow {
-        hash: tx_hash,
-        required_signers: required_signers(body),
-    });
+    out.txs.push(TxRow { hash: tx_hash });
 
     let consumed: Vec<&amaru_kernel::cardano::transaction_input::TransactionInput> =
         if is_expected_valid {

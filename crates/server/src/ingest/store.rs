@@ -26,13 +26,11 @@ CREATE TABLE IF NOT EXISTS block(
 -- bulk-insert performance case to defer this for.
 CREATE INDEX IF NOT EXISTS block_hash ON block(hash);
 
--- Minimal by design: just a tx's id, its parent block, and
--- `required_signers` -- no validity flag, no fee, no other body field.
--- `ReadTx` (UTxORPC) hydrates inputs/outputs from `utxo` alone (see
--- `query::by_tx_hash`); add further columns here only when a concrete
--- need shows up, not preemptively. `required_signers` is concatenated
--- fixed-28-byte hashes (NULL if none), unindexed -- not a queryable
--- field, just carried through for `ReadTx` to return.
+-- Minimal by design: just a tx's id and its parent block -- no
+-- validity flag, no fee, no other body field. `ReadTx` (UTxORPC)
+-- hydrates inputs/outputs from `utxo` alone (see `query::by_tx_hash`);
+-- add further columns here only when a concrete need shows up, not
+-- preemptively.
 --
 -- `block_slot` is deliberately NOT a FK to `block(slot)`: catch-up mode
 -- checkpoints one `block` row per whole chunk, not one per block (see
@@ -42,8 +40,7 @@ CREATE INDEX IF NOT EXISTS block_hash ON block(hash);
 -- (see `rollback`, below), independent of `block`'s own deletion.
 CREATE TABLE IF NOT EXISTS tx(
   hash BLOB PRIMARY KEY,
-  block_slot INTEGER NOT NULL,
-  required_signers BLOB
+  block_slot INTEGER NOT NULL
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS datum(
@@ -282,12 +279,18 @@ pub fn tip(conn: &Connection) -> Result<Option<(u64, [u8; 32])>> {
 /// Lives in `meta` (the free-form k/v table already used for `mode`/`seed`),
 /// not a new `block` column -- a column would need threading through
 /// `BlockMeta`/`insert_block_row`/`apply`'s many call sites (production and
-/// test) for a field only the resume path needs. Not transactionally tied to
-/// `block`'s own tip row: if a crash lands between the two writes, the
-/// stored header is simply one block behind the real tip, which chain-sync
-/// then just rolls forward again normally -- no consistency hazard, since
-/// the resume point is always derived from whichever header this actually
-/// holds, never asserted against a separately-tracked tip.
+/// test) for a field only the resume path needs.
+///
+/// Both writers (`apply`, `catchup::Engine::flush`) write this in the same
+/// transaction as the data it resumes to, so it can never point past what's
+/// actually committed -- there's no graceful-shutdown path (no SIGTERM/
+/// SIGINT handling at all), so a hard kill at any point must leave behind
+/// a resume cursor that's safe to reuse. At worst it's stale (catch-up:
+/// behind by a whole never-flushed chunk; running: behind by nothing, since
+/// `apply` commits every block's own write with its header together), and
+/// chain-sync just rolls forward again from there, redoing a little
+/// already-buffered-but-uncommitted work -- never a "continuity violation"
+/// against its own resume point.
 pub fn get_resume_header(conn: &Connection) -> Result<Option<Vec<u8>>> {
     Ok(conn
         .query_row("SELECT v FROM meta WHERE k = 'resume_header'", [], |r| {
@@ -325,19 +328,10 @@ pub(crate) fn insert_block_row(conn: &Connection, meta: &BlockMeta) -> Result<()
 /// production, but it keeps the function idempotent (retried
 /// flush/apply) without needing a continuity check the way the single
 /// `block` row per slot does.
-pub(crate) fn insert_tx(
-    conn: &Connection,
-    slot: u64,
-    hash: &TxHash,
-    required_signers: &[[u8; 28]],
-) -> Result<()> {
+pub(crate) fn insert_tx(conn: &Connection, slot: u64, hash: &TxHash) -> Result<()> {
     conn.execute(
-        "INSERT OR IGNORE INTO tx(hash, block_slot, required_signers) VALUES (?1, ?2, ?3)",
-        params![
-            hash.as_slice(),
-            slot,
-            (!required_signers.is_empty()).then(|| required_signers.concat())
-        ],
+        "INSERT OR IGNORE INTO tx(hash, block_slot) VALUES (?1, ?2)",
+        params![hash.as_slice(), slot],
     )?;
     Ok(())
 }
@@ -410,7 +404,12 @@ pub(crate) fn insert_script(conn: &Connection, slot: u64, s: &ScriptRow) -> Resu
 /// earlier tx's output spent by a later one — applying creates first
 /// guarantees that's already on disk. The row still lands with both
 /// `slot` and `spent_slot` set, just excluded from the tip view.
-pub fn apply(conn: &mut Connection, meta: &BlockMeta, decoded: &DecodedBlock) -> Result<()> {
+pub fn apply(
+    conn: &mut Connection,
+    meta: &BlockMeta,
+    decoded: &DecodedBlock,
+    header_cbor: Option<&[u8]>,
+) -> Result<()> {
     let tx = conn.transaction()?;
 
     if let Some((_, tip_hash)) = tip(&tx)?
@@ -437,7 +436,7 @@ pub fn apply(conn: &mut Connection, meta: &BlockMeta, decoded: &DecodedBlock) ->
     )?;
 
     for t in &decoded.txs {
-        insert_tx(&tx, meta.slot, &t.hash, &t.required_signers)?;
+        insert_tx(&tx, meta.slot, &t.hash)?;
     }
 
     for u in &decoded.created {
@@ -454,6 +453,10 @@ pub fn apply(conn: &mut Connection, meta: &BlockMeta, decoded: &DecodedBlock) ->
 
     for s in &decoded.scripts {
         insert_script(&tx, meta.slot, s)?;
+    }
+
+    if let Some(header_cbor) = header_cbor {
+        set_resume_header(&tx, header_cbor)?;
     }
 
     tx.commit()?;
@@ -635,19 +638,10 @@ mod tests {
     }
 
     fn decoded_block(creates: &[OutputRef], spends: &[OutputRef]) -> DecodedBlock {
-        let mut txs: Vec<TxRow> = creates
-            .iter()
-            .map(|r| TxRow {
-                hash: r.tx_hash,
-                required_signers: vec![],
-            })
-            .collect();
+        let mut txs: Vec<TxRow> = creates.iter().map(|r| TxRow { hash: r.tx_hash }).collect();
         let spender = fresh_spender();
         if !spends.is_empty() {
-            txs.push(TxRow {
-                hash: spender,
-                required_signers: vec![],
-            });
+            txs.push(TxRow { hash: spender });
         }
         DecodedBlock {
             txs,
@@ -701,13 +695,13 @@ mod tests {
         init(&conn).unwrap();
 
         let (meta1, hash1) = block_meta(1, [0u8; 32]);
-        apply(&mut conn, &meta1, &decoded_block(&[], &[])).unwrap();
+        apply(&mut conn, &meta1, &decoded_block(&[], &[]), None).unwrap();
 
         let (bad_meta, _) = block_meta(2, [0xFFu8; 32]); // wrong prev_hash
-        assert!(apply(&mut conn, &bad_meta, &decoded_block(&[], &[])).is_err());
+        assert!(apply(&mut conn, &bad_meta, &decoded_block(&[], &[]), None).is_err());
 
         let (meta2, _) = block_meta(2, hash1); // correct prev_hash
-        apply(&mut conn, &meta2, &decoded_block(&[], &[])).unwrap();
+        apply(&mut conn, &meta2, &decoded_block(&[], &[]), None).unwrap();
     }
 
     #[test]
@@ -719,7 +713,7 @@ mod tests {
         let ghost = fresh_ref(&mut counter); // never created
 
         let (meta, _) = block_meta(1, [0u8; 32]);
-        apply(&mut conn, &meta, &decoded_block(&[], &[ghost])).unwrap();
+        apply(&mut conn, &meta, &decoded_block(&[], &[ghost]), None).unwrap();
 
         assert!(snapshot(&conn).is_empty());
     }
@@ -733,12 +727,12 @@ mod tests {
         let r = fresh_ref(&mut counter);
 
         let (meta1, hash1) = block_meta(1, [0u8; 32]);
-        apply(&mut conn, &meta1, &decoded_block(&[r], &[])).unwrap();
+        apply(&mut conn, &meta1, &decoded_block(&[r], &[]), None).unwrap();
         let (meta2, hash2) = block_meta(2, hash1);
-        apply(&mut conn, &meta2, &decoded_block(&[], &[r])).unwrap();
+        apply(&mut conn, &meta2, &decoded_block(&[], &[r]), None).unwrap();
         let (meta3, _) = block_meta(3, hash2);
         // Already spent at slot 2; this must not move spent_slot to 3.
-        apply(&mut conn, &meta3, &decoded_block(&[], &[r])).unwrap();
+        apply(&mut conn, &meta3, &decoded_block(&[], &[r]), None).unwrap();
 
         let rows = snapshot(&conn);
         assert_eq!(rows, vec![(r, 1, Some(2))]);
@@ -753,7 +747,7 @@ mod tests {
         let r = fresh_ref(&mut counter);
 
         let (meta, _) = block_meta(1, [0u8; 32]);
-        apply(&mut conn, &meta, &decoded_block(&[r], &[r])).unwrap();
+        apply(&mut conn, &meta, &decoded_block(&[r], &[r]), None).unwrap();
 
         // Running mode does not cancel this in memory (that's catch-up only):
         // the row persists, created and spent in the same block.
@@ -770,7 +764,7 @@ mod tests {
     ) -> [u8; 32] {
         for slot in from_slot..from_slot + n {
             let (meta, hash) = block_meta(slot, prev_hash);
-            apply(conn, &meta, &decoded_block(&[], &[])).unwrap();
+            apply(conn, &meta, &decoded_block(&[], &[]), None).unwrap();
             prev_hash = hash;
         }
         prev_hash
@@ -828,17 +822,17 @@ mod tests {
         let mut prev_hash = [0u8; 32];
 
         let (meta1, hash1) = block_meta(1, prev_hash);
-        apply(&mut conn, &meta1, &decoded_block(&[old, recent], &[])).unwrap();
+        apply(&mut conn, &meta1, &decoded_block(&[old, recent], &[]), None).unwrap();
         prev_hash = hash1;
 
         let (meta2, hash2) = block_meta(2, prev_hash);
-        apply(&mut conn, &meta2, &decoded_block(&[], &[old])).unwrap(); // old spent at slot 2
+        apply(&mut conn, &meta2, &decoded_block(&[], &[old]), None).unwrap(); // old spent at slot 2
         prev_hash = hash2;
 
         prev_hash = apply_n_empty_blocks(&mut conn, 3, 10, prev_hash); // blocks 3..=12
 
         let (meta13, hash13) = block_meta(13, prev_hash);
-        apply(&mut conn, &meta13, &decoded_block(&[], &[recent])).unwrap(); // recent spent at slot 13
+        apply(&mut conn, &meta13, &decoded_block(&[], &[recent]), None).unwrap(); // recent spent at slot 13
         apply_n_empty_blocks(&mut conn, 14, 1, hash13); // tip is now block_no 14
 
         // Tip block_no 14, k=10 -> cutoff at block_no 4 -> cutoff_slot 4.
@@ -951,7 +945,7 @@ mod tests {
                 let (meta, hash) = block_meta(slot, prev_hash);
                 prev_hash = hash;
 
-                apply(&mut conn, &meta, &decoded_block(&creates, &spends)).unwrap();
+                apply(&mut conn, &meta, &decoded_block(&creates, &spends), None).unwrap();
                 model.apply(slot, &creates, &spends);
             }
 

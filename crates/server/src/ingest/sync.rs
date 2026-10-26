@@ -364,7 +364,7 @@ pub fn apply_loop(
                         let eng = engine
                             .as_mut()
                             .expect("engine present while mode is Catchup");
-                        eng.apply_block(meta, &decoded)?;
+                        eng.apply_block(meta, &decoded, Some(&header_cbor))?;
                         if eng.should_flush(&chunk_cfg) {
                             eng.flush(conn)?;
                         }
@@ -382,7 +382,7 @@ pub fn apply_loop(
                         }
                     }
                     Mode::Running => {
-                        store::apply(conn, &meta, &decoded)?;
+                        store::apply(conn, &meta, &decoded, Some(&header_cbor))?;
                         blocks_since_prune += 1;
                         if blocks_since_prune >= cfg.prune_interval {
                             store::prune(conn, cfg.k)?;
@@ -390,8 +390,6 @@ pub fn apply_loop(
                         }
                     }
                 }
-
-                store::set_resume_header(conn, &header_cbor)?;
 
                 stats.applied += 1;
                 stats.last_block_no = block_no;

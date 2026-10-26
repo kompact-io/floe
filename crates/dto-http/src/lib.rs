@@ -85,31 +85,6 @@ pub(crate) fn de_hex_array_opt<'de, D: Deserializer<'de>, const N: usize>(
     .transpose()
 }
 
-/// Like `ser_hex`, for a list of byte strings (e.g.
-/// `query::Tx.required_signers`) -- each element its own hex string,
-/// not one hex string over the whole list.
-#[cfg(feature = "json")]
-pub(crate) fn ser_hex_list<S: Serializer, T: AsRef<[u8]>>(
-    items: &[T],
-    s: S,
-) -> Result<S::Ok, S::Error> {
-    use serde::ser::SerializeSeq;
-    let mut seq = s.serialize_seq(Some(items.len()))?;
-    for item in items {
-        seq.serialize_element(&hex::encode(item.as_ref()))?;
-    }
-    seq.end()
-}
-
-#[cfg(feature = "json")]
-pub(crate) fn de_hex_vec_list<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Vec<u8>>, D::Error> {
-    let items: Vec<String> = Vec::deserialize(d)?;
-    items
-        .into_iter()
-        .map(|s| hex::decode(&s).map_err(serde::de::Error::custom))
-        .collect()
-}
-
 /// gRPC carries its errors as `tonic::Status` instead.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]

@@ -385,7 +385,6 @@ fn tx_dto(t: Tx, block: Option<BlockPoint>) -> Result<q::Tx> {
         // Hardcoded, same tracked gap as `grpc.rs`'s `any_chain_tx` --
         // see `TODO.md`.
         successful: true,
-        required_signers: t.required_signers.iter().map(|h| h.to_vec()).collect(),
     })
 }
 

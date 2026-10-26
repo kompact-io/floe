@@ -1,22 +1,14 @@
-//! Seeding the `ChainStore` resource `amaru-protocols`' chain-sync initiator
-//! needs to resume from a point.
+//! Seeds the `ChainStore` resource chain-sync resumes from.
 //!
-//! There's no "resume from this `Point`" parameter anywhere in
-//! `amaru-protocols`' chainsync initiator -- on `Initialize` it samples its
-//! own ancestor points to offer in `FindIntersect` from a local `ChainStore`
-//! resource (see `orchestrator`/`pipeline` module docs). So "where to resume
-//! from" has to be expressed by seeding that store with one real header as
-//! its "best chain tip," not passed as a parameter anywhere closer to the
-//! connection itself.
+//! amaru-protocols' chainsync initiator takes no "resume from this Point"
+//! parameter -- on `Initialize` it samples ancestor points from a local
+//! `ChainStore`. So resuming means seeding that store's "best chain tip"
+//! with one real header, not passing a point directly.
 //!
-//! [`ResumeFrom::Header`] takes a [`Header`] directly -- deliberately not a
-//! `Point` plus a fetch -- because the intended caller is `floe`'s own
-//! `ingest/sync.rs`, which caches its current tip's header (re-encoded CBOR)
-//! across restarts specifically so this doesn't need a network round-trip in
-//! steady state. A round-trip is only unavoidable once: after a fresh seed
-//! (the snapshot anchor has no header bytes attached, just `<slot>.<hash>` in
-//! its filename) or for a pre-existing DB's first run under this cache --
-//! `ingest/sync.rs` handles that fallback, this module doesn't.
+//! [`ResumeFrom::Header`] takes a [`Header`], not a `Point` + fetch: the
+//! real caller (`ingest/sync.rs`) caches its tip's header across restarts
+//! to avoid a network round-trip in steady state; that fallback lives
+//! there, not here.
 
 use std::sync::Arc;
 
@@ -37,17 +29,15 @@ pub enum ResumeFrom<'a> {
     /// A real header, elsewhere on the peer's chain. Its own point (via
     /// [`point_of`]) is what's offered to `FindIntersect`.
     Header(&'a Header),
-    /// Genesis. No header is needed for this one: amaru-protocols' chain-sync
-    /// initiator special-cases `Point::Origin` as the best chain tip and
-    /// returns it directly as the sole intersect candidate (see
-    /// `sample_ancestor_points`), without ever calling `load_header`.
+    /// Genesis -- no header needed: the chain-sync initiator special-cases
+    /// `Point::Origin` as the sole intersect candidate without a header load.
     Origin,
 }
 
 /// Build a `ChainStore` (suitable for `ResourceHeaderStore`) whose "best
 /// chain tip" is `resume`'s point -- the minimum a chain-sync initiator
 /// needs to successfully intersect and resume from that point.
-pub fn seed_chain_store(resume: ResumeFrom<'_>) -> anyhow::Result<Arc<InMemoryChainStore>> {
+pub fn seed_chain_store(resume: ResumeFrom<'_>) -> crate::Result<Arc<InMemoryChainStore>> {
     let chain_store = Arc::new(InMemoryChainStore::default());
     let point = match resume {
         ResumeFrom::Header(header) => {

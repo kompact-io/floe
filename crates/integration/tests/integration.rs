@@ -197,10 +197,7 @@ fn seed(path: &Path) {
     let decoded = DecodedBlock {
         txs: [TX0, TX1, TX2]
             .into_iter()
-            .map(|hash| TxRow {
-                hash,
-                required_signers: vec![],
-            })
+            .map(|hash| TxRow { hash })
             .collect(),
         spent: Default::default(),
         created: vec![plain, with_asset_and_script, with_datum],
@@ -223,6 +220,7 @@ fn seed(path: &Path) {
             block_no: Some(1),
         },
         &decoded,
+        None,
     )
     .unwrap();
     Engine::new(store::tip(&conn).unwrap())

@@ -109,7 +109,6 @@ pub struct Tx {
     pub hash: TxHash,
     pub inputs: Vec<Utxo>,
     pub outputs: Vec<Utxo>,
-    pub required_signers: Vec<[u8; 28]>,
 }
 
 /// Rebuilds the address from `(address_header, pay_hash, stake_hash)`
@@ -283,7 +282,6 @@ impl Ctx {
                             hash: t.hash,
                             inputs: t.inputs.into_iter().map(row).collect(),
                             outputs: t.outputs.into_iter().map(row).collect(),
-                            required_signers: t.required_signers,
                         },
                         block,
                     ))

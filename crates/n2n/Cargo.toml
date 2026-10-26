@@ -5,10 +5,10 @@ edition.workspace = true
 description = "Single-peer Cardano node-to-node client (handshake, pipelined chainsync + blockfetch) built on amaru-protocols/amaru-pure-stage, without amaru's connection-manager/gossip layer"
 
 [dependencies]
-anyhow = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
 serde = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
@@ -20,6 +20,11 @@ amaru-protocols = { workspace = true }
 amaru-pure-stage = { workspace = true }
 
 [dev-dependencies]
+# Examples/tests only -- the library's own public API returns `crate::Error`
+# (thiserror), never anyhow. Throwaway CLI/test scaffolding reaching for
+# anyhow's ergonomics is a different concern from the library leaking an
+# opaque error type to its callers.
+anyhow = { workspace = true }
 amaru-kernel = { workspace = true, features = ["test-utils"] }
 pallas-network = { workspace = true }
 tracing-subscriber = { workspace = true }

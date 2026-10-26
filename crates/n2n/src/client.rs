@@ -1,8 +1,6 @@
-//! Ergonomic facade over `orchestrator` + `pipeline`: a single-peer client
-//! whose caller drives its own fetch policy (when to batch bodies, how deep
-//! to buffer) rather than this crate deciding that -- see `pipeline`'s module
-//! docs. This is the intended integration point for `floe`'s own
-//! `ingest/sync.rs`.
+//! Facade over `connection` + `pipeline`: a single-peer client. Caller
+//! drives its own fetch policy (batch size, depth) -- see `pipeline`'s
+//! docs. Integration point for `floe`'s `ingest/sync.rs`.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,12 +15,13 @@ use amaru_protocols::connection::ConnectionMessage;
 use amaru_protocols::store_effects::ResourceHeaderStore;
 use amaru_pure_stage::tokio::{TokioBuilder, TokioRunning};
 use amaru_pure_stage::{Receiver, Sender, StageGraph};
-use anyhow::{Result, anyhow, bail};
 use futures_util::StreamExt;
 
-use crate::pipeline::{HeaderEvent, PipelineMsg};
+use crate::Result;
+use crate::error::Error;
+use crate::pipeline::HeaderEvent;
 use crate::resume::ResumeFrom;
-use crate::{orchestrator, pipeline, resume};
+use crate::{connection, pipeline, resume};
 
 /// How long one connect-and-intersect attempt may take before giving up on
 /// it (not the whole retry budget -- see [`Client::connect_with_retry`]).
@@ -31,7 +30,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct Client {
     headers: Receiver<HeaderEvent>,
     pending_first: Option<HeaderEvent>,
-    fetch: Sender<PipelineMsg>,
+    /// Sends `ConnectionMessage::FetchBlocks` straight to `connection`'s
+    /// mailbox, not `pipeline`'s -- see `connection`'s module docs for why.
+    fetch: Sender<ConnectionMessage>,
     blocks_out: amaru_pure_stage::StageRef<Blocks>,
     blocks: Receiver<Blocks>,
     next_fetch_id: u64,
@@ -57,14 +58,13 @@ impl Client {
 
         let pipeline_stage = network.stage("pipeline", pipeline::stage);
         let pipeline_ref = network
-            .wire_up(pipeline_stage, pipeline::State::new(headers_ref))
+            .wire_up(pipeline_stage, pipeline::Pipeline::new(headers_ref))
             .without_state();
-        let fetch = network.input(&pipeline_ref);
 
-        let orchestrator_stage = network.stage("orchestrator", orchestrator::stage);
-        let orchestrator_ref = network.wire_up(
-            orchestrator_stage,
-            orchestrator::State::Initial(orchestrator::Params {
+        let connection_stage = network.stage("connection", connection::stage);
+        let connection_ref = network.wire_up(
+            connection_stage,
+            connection::Connection::new(connection::Params {
                 peer,
                 conn_id,
                 magic,
@@ -72,12 +72,14 @@ impl Client {
             }),
         );
 
-        let input = network.input(&orchestrator_ref);
+        // Kept, not a one-shot send: `fetch_bodies` reuses this for every
+        // later `FetchBlocks` too.
+        let fetch = network.input(&connection_ref);
         let running = network.run(tokio::runtime::Handle::current());
-        input
+        fetch
             .send(ConnectionMessage::Initialize)
             .await
-            .map_err(|_| anyhow!("orchestrator stage already gone"))?;
+            .map_err(|_| Error::StageGone("connection"))?;
 
         Ok(Self {
             headers: headers_rx,
@@ -91,10 +93,8 @@ impl Client {
     }
 
     /// Like [`Self::connect`], but retries on [`HeaderEvent::IntersectNotFound`]
-    /// by reconnecting from scratch -- `amaru-protocols`' chain-sync initiator
-    /// has no "retry `FindIntersect` on this same connection" primitive, unlike
-    /// `pallas_network`'s `Client`, so each retry is a fresh TCP connection +
-    /// handshake, not a resend on the same one.
+    /// by reconnecting from scratch -- no "resend `FindIntersect`" primitive
+    /// here (unlike `pallas_network`'s `Client`).
     pub async fn connect_with_retry(
         addr: SocketAddr,
         magic: NetworkMagic,
@@ -102,7 +102,7 @@ impl Client {
         retry_delay: Duration,
         max_retries: u32,
     ) -> Result<Self> {
-        let peer = Peer::try_from(addr).map_err(|e| anyhow!("{e}"))?;
+        let peer = Peer::try_from(addr)?;
         let resume = || match resume_header {
             Some(h) => ResumeFrom::Header(h),
             None => ResumeFrom::Origin,
@@ -121,7 +121,7 @@ impl Client {
                 other => return Ok(client.with_first_header(other)),
             }
         }
-        bail!("peer never caught up to our resume point after {max_retries} attempts")
+        Err(Error::NeverCaughtUp(max_retries))
     }
 
     /// Re-queues `event` so the next [`Self::next_header`] call returns it --
@@ -139,10 +139,7 @@ impl Client {
         if let Some(event) = self.pending_first.take() {
             return Ok(event);
         }
-        self.headers
-            .next()
-            .await
-            .ok_or_else(|| anyhow!("connection closed"))
+        self.headers.next().await.ok_or(Error::ConnectionClosed)
     }
 
     /// Request bodies for the (inclusive) point range `from..=through` and
@@ -152,30 +149,25 @@ impl Client {
         let id = self.next_fetch_id;
         self.next_fetch_id += 1;
         self.fetch
-            .send(PipelineMsg::FetchBodies {
+            .send(ConnectionMessage::FetchBlocks {
                 from,
                 through,
                 id,
                 cr: self.blocks_out.clone(),
             })
             .await
-            .map_err(|_| anyhow!("pipeline stage already gone"))?;
+            .map_err(|_| Error::StageGone("connection"))?;
 
         let mut blocks = Vec::new();
         loop {
-            match self
-                .blocks
-                .next()
-                .await
-                .ok_or_else(|| anyhow!("connection closed"))?
-            {
+            match self.blocks.next().await.ok_or(Error::ConnectionClosed)? {
                 Blocks::Block(got_id, _peer, block) if got_id == id => blocks.push(block),
                 Blocks::Done(got_id) if got_id == id => return Ok(blocks),
                 Blocks::NoBlocks(got_id, _peer) if got_id == id => {
-                    bail!("peer has no blocks in {from:?}..={through:?}")
+                    return Err(Error::NoBlocksInRange { from, through });
                 }
                 Blocks::NoPeersAvailable(got_id) if got_id == id => {
-                    bail!("block-fetch initiator not ready")
+                    return Err(Error::BlockFetchNotReady);
                 }
                 // Not for this request -- shouldn't happen (Client only has
                 // one fetch in flight at a time), but don't silently hang.

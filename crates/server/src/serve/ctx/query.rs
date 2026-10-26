@@ -299,10 +299,6 @@ pub struct ResolvedTx {
     pub block_slot: u64,
     pub inputs: Vec<ResolvedUtxo>,
     pub outputs: Vec<ResolvedUtxo>,
-    /// `tx.required_signers`, unpacked from `store`'s concatenated
-    /// 28-byte-chunk `BLOB` encoding. Empty, not an error, for a
-    /// seed-inherited row (see `store::insert_tx`'s own doc).
-    pub required_signers: Vec<[u8; 28]>,
 }
 
 /// Primary-key lookup, available in both modes like `by_ref`. `None`
@@ -312,21 +308,16 @@ pub struct ResolvedTx {
 /// reasons) is `Some` with an empty `outputs`/`inputs` as appropriate,
 /// not `None`.
 pub fn by_tx_hash(conn: &Connection, hash: TxHash) -> Result<Option<ResolvedTx>> {
-    let row: Option<(u64, Option<Vec<u8>>)> = conn
+    let block_slot: Option<u64> = conn
         .query_row(
-            "SELECT block_slot, required_signers FROM tx WHERE hash = ?1",
+            "SELECT block_slot FROM tx WHERE hash = ?1",
             params![hash.as_slice()],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| r.get(0),
         )
         .optional()?;
-    let Some((block_slot, required_signers)) = row else {
+    let Some(block_slot) = block_slot else {
         return Ok(None);
     };
-    let required_signers = required_signers
-        .unwrap_or_default()
-        .as_chunks::<28>()
-        .0
-        .to_vec();
 
     let outputs = {
         let sql = format!("{RESOLVE_SELECT} WHERE utxo.tx_hash = ?1 ORDER BY utxo.ix");
@@ -345,7 +336,6 @@ pub fn by_tx_hash(conn: &Connection, hash: TxHash) -> Result<Option<ResolvedTx>>
         block_slot,
         inputs,
         outputs,
-        required_signers,
     }))
 }
 
@@ -731,7 +721,7 @@ mod tests {
             },
         )
         .unwrap();
-        store::insert_tx(&conn, 1, &[0x01u8; 32], &[]).unwrap();
+        store::insert_tx(&conn, 1, &[0x01u8; 32]).unwrap();
         store::insert_utxo(&conn, 1, &utxo(0x01)).unwrap();
 
         assert!(by_ref(&conn, r).unwrap().is_some());
@@ -778,10 +768,7 @@ mod tests {
         let decoded = DecodedBlock {
             txs: [0x01u8, 0x02, 0x03, 0x04]
                 .into_iter()
-                .map(|b| TxRow {
-                    hash: [b; 32],
-                    required_signers: vec![],
-                })
+                .map(|b| TxRow { hash: [b; 32] })
                 .collect(),
             spent: Default::default(),
             created: vec![inline_out, unresolved_out, resolved_out, script_out],
@@ -810,6 +797,7 @@ mod tests {
                 block_no: Some(1),
             },
             &decoded,
+            None,
         )
         .unwrap();
         switch_to_running(&mut conn);
@@ -850,12 +838,7 @@ mod tests {
         let mut conn = fresh_db();
         let pay_hash = [0x61u8; 28];
         let decoded = DecodedBlock {
-            txs: (0..5u8)
-                .map(|i| TxRow {
-                    hash: [i; 32],
-                    required_signers: vec![],
-                })
-                .collect(),
+            txs: (0..5u8).map(|i| TxRow { hash: [i; 32] }).collect(),
             spent: Default::default(),
             created: (0..5u8)
                 .map(|i| Utxo {
@@ -875,6 +858,7 @@ mod tests {
                 block_no: Some(1),
             },
             &decoded,
+            None,
         )
         .unwrap();
         switch_to_running(&mut conn);
@@ -926,16 +910,7 @@ mod tests {
             ..utxo(0x02)
         };
         let decoded = DecodedBlock {
-            txs: vec![
-                TxRow {
-                    hash: [0x01; 32],
-                    required_signers: vec![],
-                },
-                TxRow {
-                    hash: [0x02; 32],
-                    required_signers: vec![],
-                },
-            ],
+            txs: vec![TxRow { hash: [0x01; 32] }, TxRow { hash: [0x02; 32] }],
             spent: Default::default(),
             created: vec![enterprise, base],
             datums: vec![],
@@ -950,6 +925,7 @@ mod tests {
                 block_no: Some(1),
             },
             &decoded,
+            None,
         )
         .unwrap();
         switch_to_running(&mut conn);
@@ -973,10 +949,7 @@ mod tests {
         let r = spent_utxo.output_ref;
 
         let create = DecodedBlock {
-            txs: vec![TxRow {
-                hash: [0x01; 32],
-                required_signers: vec![],
-            }],
+            txs: vec![TxRow { hash: [0x01; 32] }],
             spent: Default::default(),
             created: vec![spent_utxo],
             datums: vec![],
@@ -991,13 +964,11 @@ mod tests {
                 block_no: Some(1),
             },
             &create,
+            None,
         )
         .unwrap();
         let spend = DecodedBlock {
-            txs: vec![TxRow {
-                hash: [0xFFu8; 32],
-                required_signers: vec![],
-            }],
+            txs: vec![TxRow { hash: [0xFFu8; 32] }],
             spent: [(r, [0xFFu8; 32])].into_iter().collect(),
             created: vec![],
             datums: vec![],
@@ -1012,6 +983,7 @@ mod tests {
                 block_no: Some(2),
             },
             &spend,
+            None,
         )
         .unwrap();
         switch_to_running(&mut conn);

@@ -141,12 +141,7 @@ impl Chunk {
         let mut txs: Vec<[u8; 32]> = self.txs.drain().collect();
         txs.sort();
         for hash in &txs {
-            // A seed snapshot carries no tx-body data at all (just the
-            // UTxOs it produced) -- `required_signers` is empty here
-            // the same way `ChainPoint`/`block_ref` are zero-valued
-            // for seed-inherited rows elsewhere, not a gap specific to
-            // this field.
-            store::insert_tx(&tx, self.anchor_slot, hash, &[])?;
+            store::insert_tx(&tx, self.anchor_slot, hash)?;
         }
 
         let mut rows = std::mem::take(&mut self.rows);
@@ -578,7 +573,7 @@ mod tests {
             },
         )
         .unwrap();
-        store::insert_tx(&conn, 1, &[0x7fu8; 32], &[]).unwrap();
+        store::insert_tx(&conn, 1, &[0x7fu8; 32]).unwrap();
         store::insert_utxo(
             &conn,
             1,
@@ -633,7 +628,7 @@ mod tests {
             block_no: Some(1_001),
         };
         engine
-            .apply_block(next, &crate::ingest::decode::DecodedBlock::default())
+            .apply_block(next, &crate::ingest::decode::DecodedBlock::default(), None)
             .expect("the block after the anchor must chain onto the seed's checkpoint");
 
         let bad = BlockMeta {
@@ -645,7 +640,7 @@ mod tests {
         let mut engine2 = Engine::new(store::tip(&conn).unwrap());
         assert!(
             engine2
-                .apply_block(bad, &crate::ingest::decode::DecodedBlock::default())
+                .apply_block(bad, &crate::ingest::decode::DecodedBlock::default(), None)
                 .is_err()
         );
     }
