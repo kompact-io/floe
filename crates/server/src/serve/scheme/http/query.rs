@@ -33,6 +33,7 @@ use axum::extract::{Extension, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use tower_http::cors::CorsLayer;
 use tracing::info;
 
 use floe_dto_http::ErrorBody;
@@ -131,6 +132,16 @@ pub async fn serve(addr: &str, ctx: Ctx, formats: HttpFormats) -> Result<()> {
     Ok(())
 }
 
+/// Permissive CORS: this listener serves public chain data with no
+/// auth of its own, so any browser origin may call it. `CorsLayer`
+/// answers the `OPTIONS` preflight a non-"simple" request (our JSON/
+/// CBOR `Content-Type`) forces the browser to send, which otherwise
+/// 405s here (no route handles `OPTIONS`) and the browser aborts the
+/// real request before it's ever sent.
+fn cors_layer() -> CorsLayer {
+    CorsLayer::permissive()
+}
+
 fn build_router(state: Ctx, formats: HttpFormats) -> Router {
     Router::new()
         .route(q::READ_UTXOS_PATH, post(read_utxos_handler))
@@ -138,6 +149,7 @@ fn build_router(state: Ctx, formats: HttpFormats) -> Router {
         .route(q::READ_DATA_PATH, post(data_handler))
         .route(q::READ_TX_PATH, post(tx_handler))
         .route(s::SUBMIT_TX_PATH, post(submit_handler))
+        .layer(cors_layer())
         .layer(Extension(formats))
         .with_state(state)
 }

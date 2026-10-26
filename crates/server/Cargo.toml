@@ -35,7 +35,6 @@ floe-n2n = { workspace = true }
 hex = { workspace = true }
 http = { workspace = true }
 minicbor = { workspace = true }
-pallas-network = { workspace = true }
 rayon = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
@@ -46,9 +45,16 @@ tikv-jemallocator = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true, optional = true }
 tower = { workspace = true }
+tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 zstd = { workspace = true }
 
 [dev-dependencies]
+# Examples only (chainsync_probe, fixture_scan, peer_tip, seed_probe) --
+# floe-server's library/binary no longer touches pallas-network at all
+# (see crates/n2n/src/single_fetch.rs, which replaced its one production
+# use). Kept here, not removed, since those examples are still useful
+# manual/exploratory probes against a real peer.
+pallas-network = { workspace = true }
 proptest = { workspace = true }

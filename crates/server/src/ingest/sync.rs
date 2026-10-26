@@ -1,17 +1,17 @@
 //! sync: chainsync + blockfetch client, wired to `decode`, `store` and
 //! `catchup`.
 //!
-//! Chain-sync and block-fetch themselves go through `floe_n2n::client::Client`
-//! (real CIP-0164 pipelining via amaru-protocols/amaru-pure-stage, not
-//! pallas-network's lock-step `Client` -- see `plan-amaru-migration.md`).
-//! `pallas-network` survives here in exactly one place: [`fetch_header_via_pallas`],
-//! a one-shot bootstrap used only when there's no cached resume header yet
-//! (a fresh seed, or a pre-existing DB's first run under this code) --
-//! `amaru-protocols`' chain-sync initiator has no "resume from this Point"
-//! parameter; it needs a real `Header` object (see
-//! `floe_n2n::resume::seed_chain_store`), which floe caches going forward
-//! (`store::get_resume_header`/`set_resume_header`) specifically so this
-//! bootstrap only ever runs once per DB, not on every restart.
+//! Chain-sync and block-fetch alike go entirely through `floe_n2n`'s
+//! amaru-protocols/amaru-pure-stage based client (real CIP-0164 pipelining,
+//! which pallas-network's lock-step `Client` cannot do -- see
+//! `plan-amaru-migration.md`). `pallas-network` is no longer a dependency of
+//! `floe-server`'s production path at all: the one place it used to survive,
+//! [`fetch_header_via_blockfetch`] (a one-shot bootstrap used only when
+//! there's no cached resume header yet), now goes through
+//! `floe_n2n::single_fetch::fetch_block` -- a blockfetch-only dial that
+//! skips chain-sync entirely, since chain-sync has no equivalent bootstrap
+//! (it needs a `ChainStore` resume point to even start, which is exactly
+//! what's missing here).
 
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
@@ -60,7 +60,7 @@ pub enum Event {
         peer_tip_block_no: u64,
         /// This block's own header, re-encoded CBOR -- cached via
         /// `store::set_resume_header` once applied, so a restart can resume
-        /// chain-sync from here without `fetch_header_via_pallas`.
+        /// chain-sync from here without `fetch_header_via_blockfetch`.
         header_cbor: Vec<u8>,
     },
     Rollback {
@@ -128,26 +128,24 @@ const INTERSECT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_sec
 const MAX_INTERSECT_RETRIES: u32 = 60;
 
 /// One-shot bootstrap: fetch the header at `(slot, hash)` via
-/// `pallas-network`'s blockfetch (chain-sync never hands back the
-/// intersection point's own content, only blocks after it -- see
-/// `floe_n2n`'s `dial_peer` example, which uses the identical pattern).
-/// Only called when `store::get_resume_header` found nothing cached.
-async fn fetch_header_via_pallas(
+/// `floe_n2n::single_fetch` (chain-sync never hands back the intersection
+/// point's own content, only blocks after it -- see `floe_n2n`'s
+/// `dial_peer` example, which uses the identical pattern). Only called
+/// when `store::get_resume_header` found nothing cached.
+async fn fetch_header_via_blockfetch(
     addr: &str,
     magic: u64,
     slot: u64,
     hash: [u8; 32],
 ) -> Result<Header> {
-    use amaru_kernel::RawBlock;
-    use amaru_kernel::cardano::network_block::NetworkBlock;
-    use pallas_network::facades::PeerClient;
-    use pallas_network::miniprotocols::Point as PallasPoint;
-
-    let mut client = PeerClient::connect(addr, magic).await?;
-    let point = PallasPoint::Specific(slot, hash.to_vec());
-    let bytes = client.blockfetch().fetch_single(point).await?;
-    let network_block = NetworkBlock::try_from(RawBlock::from(bytes.as_slice()))?;
-    Ok(network_block.decode_block()?.header)
+    let socket_addr = addr
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| anyhow!("could not resolve {addr}"))?;
+    let point = Point::Specific(slot.into(), hash.into(), 0u64.into());
+    let block =
+        floe_n2n::single_fetch::fetch_block(socket_addr, NetworkMagic::from(magic), point).await?;
+    Ok(block.header)
 }
 
 /// Where to resume chain-sync from, resolved once before the fetch loop
@@ -158,8 +156,8 @@ pub(crate) enum Resume {
 }
 
 /// Prefers the cached header (`store::get_resume_header`); falls back to
-/// `fetch_header_via_pallas` using `store::tip`'s `(slot, hash)` if nothing's
-/// cached yet; `Resume::Origin` only for a DB with no tip at all (no
+/// `fetch_header_via_blockfetch` using `store::tip`'s `(slot, hash)` if
+/// nothing's cached yet; `Resume::Origin` only for a DB with no tip at all (no
 /// `--seed`, never synced).
 async fn resolve_resume(addr: &str, magic: u64, conn: &Connection) -> Result<Resume> {
     if let Some(bytes) = store::get_resume_header(conn)? {
@@ -172,9 +170,9 @@ async fn resolve_resume(addr: &str, magic: u64, conn: &Connection) -> Result<Res
             info!(
                 slot,
                 hash = hex::encode(hash),
-                "no cached resume header -- fetching one via pallas-network"
+                "no cached resume header -- fetching one via floe_n2n::single_fetch"
             );
-            let header = fetch_header_via_pallas(addr, magic, slot, hash).await?;
+            let header = fetch_header_via_blockfetch(addr, magic, slot, hash).await?;
             Ok(Resume::Header(Box::new(header)))
         }
     }

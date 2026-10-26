@@ -28,3 +28,4 @@ pub mod client;
 pub mod orchestrator;
 pub mod pipeline;
 pub mod resume;
+pub mod single_fetch;
