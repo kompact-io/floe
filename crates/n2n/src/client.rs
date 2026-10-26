@@ -107,12 +107,15 @@ impl Client {
             Some(h) => ResumeFrom::Header(h),
             None => ResumeFrom::Origin,
         };
+        let mut last_tip_block_no = 0;
         for attempt in 1..=max_retries {
             let mut client = Self::connect(peer, magic, resume()).await?;
             match client.next_header().await? {
-                HeaderEvent::IntersectNotFound { .. } => {
+                HeaderEvent::IntersectNotFound { tip_block_no } => {
+                    last_tip_block_no = tip_block_no;
                     tracing::warn!(
                         attempt,
+                        tip_block_no,
                         "intersect not found -- peer hasn't caught up to our resume point yet; reconnecting"
                     );
                     tokio::time::sleep(retry_delay).await;
@@ -121,7 +124,10 @@ impl Client {
                 other => return Ok(client.with_first_header(other)),
             }
         }
-        Err(Error::NeverCaughtUp(max_retries))
+        Err(Error::NeverCaughtUp {
+            attempts: max_retries,
+            peer_tip_block_no: last_tip_block_no,
+        })
     }
 
     /// Re-queues `event` so the next [`Self::next_header`] call returns it --

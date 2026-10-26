@@ -178,6 +178,98 @@ async fn resolve_resume(addr: &str, magic: u64, conn: &Connection) -> Result<Res
     }
 }
 
+/// `resolve_resume` can hand back a point the peer doesn't have at all --
+/// not the "peer hasn't caught up to our resume point yet" case
+/// `Client::connect_with_retry`'s long retry budget exists for (see its
+/// module doc), but a genuine orphan: our last-applied block was rolled
+/// back by a reorg this node never locally observed (e.g. its connection
+/// dropped at the wrong moment, or it crashed between a `RollBackward`
+/// and the `RollForward` that would have overwritten `resume_header`
+/// again). The two cases are told apart by the peer's own reported tip on
+/// `IntersectNotFound`: "still catching up" means that tip is behind our
+/// resume point; "orphaned" means it's already past it, since a peer
+/// that's already ahead of our point and still doesn't have it never
+/// will.
+///
+/// One probe connection (`PROBE_RETRIES`, not the long budget) decides
+/// which case this is. On a confirmed orphan, roll back one block at a
+/// time via `store::rollback` -- the same call a real `RollBackward`
+/// would make, which also clears the now-invalid cached `resume_header`
+/// (see its doc) -- and re-probe, bounded by `cfg.catchup_depth()` (k +
+/// margin): the same depth `apply_loop`'s `Event::Rollback` arm already
+/// assumes no real rollback can exceed once in `Mode::Running`. Going
+/// further than that locally would mean the chain has diverged beyond
+/// that assumption entirely, so it's a hard error instead of something to
+/// keep silently rolling back through.
+///
+/// Costs one extra connect-and-probe on every call, including the common
+/// case where the first point is already fine -- a deliberate trade for
+/// not needing `fetch_loop`/`Client` to accept a pre-connected client
+/// instead of re-deriving one from `Resume`.
+const PROBE_RETRIES: u32 = 1;
+
+#[instrument(skip(conn, cfg), fields(addr, magic))]
+async fn resolve_resume_with_recovery(
+    addr: &str,
+    magic: u64,
+    conn: &mut Connection,
+    cfg: ModeConfig,
+) -> Result<Resume> {
+    let socket_addr = addr
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| anyhow!("could not resolve {addr}"))?;
+    let mut rolled_back = 0u64;
+    loop {
+        let resume = resolve_resume(addr, magic, conn).await?;
+        let header = match &resume {
+            Resume::Header(h) => h.as_ref(),
+            // Nothing cached or committed to roll back from.
+            Resume::Origin => return Ok(resume),
+        };
+        let our_block_no = header.block_height().as_u64();
+        match Client::connect_with_retry(
+            socket_addr,
+            NetworkMagic::from(magic),
+            Some(header),
+            INTERSECT_RETRY_DELAY,
+            PROBE_RETRIES,
+        )
+        .await
+        {
+            Ok(_client) => return Ok(resume),
+            Err(floe_n2n::error::Error::NeverCaughtUp {
+                peer_tip_block_no, ..
+            }) if peer_tip_block_no >= our_block_no => {
+                let Some(prev_slot) = store::previous_tip_slot(conn)? else {
+                    bail!(
+                        "resume point (block_no={our_block_no}) not found on peer, and no \
+                         earlier local history to fall back to"
+                    );
+                };
+                store::rollback(conn, prev_slot)?;
+                rolled_back += 1;
+                anyhow::ensure!(
+                    rolled_back <= cfg.catchup_depth(),
+                    "resume point still not found on peer after locally rolling back \
+                     {rolled_back} blocks (> k+margin={}) -- chain state has likely diverged \
+                     beyond reorg-safety assumptions; needs manual investigation",
+                    cfg.catchup_depth()
+                );
+                warn!(
+                    rolled_back,
+                    prev_slot, "resume point orphaned -- rolled back one block and retrying"
+                );
+            }
+            // Either the peer's tip is still behind our point (ordinary
+            // "hasn't caught up yet") or some unrelated connect error --
+            // both are `fetch_loop`'s own `connect_with_retry` call's job,
+            // with its full retry budget.
+            Err(_) => return Ok(resume),
+        }
+    }
+}
+
 /// `fetch_single`/`fetch_range`-equivalent via `Client::fetch_bodies`;
 /// decodes in parallel, then sends one `Event::Apply` per block in order.
 /// Returns `true` if `tx`'s receiver is gone and the caller should stop.
@@ -451,8 +543,11 @@ pub async fn run(
 
     // Resolve the resume point (cached header, bootstrap fetch, or Origin)
     // up front, on `conn`, before it moves into the blocking apply task
-    // below -- `fetch_loop` itself never touches the DB.
-    let resume = resolve_resume(&addr, magic, &conn).await?;
+    // below -- `fetch_loop` itself never touches the DB. Validates (and,
+    // if needed, locally recovers) the point against the peer here too --
+    // see `resolve_resume_with_recovery`'s doc -- since `conn` isn't
+    // available to roll back on once it moves into `apply_task`.
+    let resume = resolve_resume_with_recovery(&addr, magic, &mut conn, cfg).await?;
 
     // `Client::connect_with_retry`'s future isn't `Send` (amaru-pure-stage
     // internals), so it can't be `tokio::spawn`'d like `fetch_loop` used to

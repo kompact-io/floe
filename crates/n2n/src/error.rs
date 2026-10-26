@@ -28,8 +28,16 @@ pub enum Error {
     #[error("connection closed before any reply")]
     ConnectionClosedBeforeReply,
 
-    #[error("peer never caught up to our resume point after {0} attempts")]
-    NeverCaughtUp(u32),
+    /// `peer_tip_block_no`: the peer's own tip as of the last
+    /// `IntersectNotFound` reply -- callers use it to tell "peer hasn't
+    /// caught up to our resume point yet" (peer tip still behind it) apart
+    /// from a confirmed orphan (peer tip already past it, so no amount of
+    /// retrying the same point will ever succeed).
+    #[error("peer never caught up to our resume point after {attempts} attempts (peer tip block_no={peer_tip_block_no})")]
+    NeverCaughtUp {
+        attempts: u32,
+        peer_tip_block_no: u64,
+    },
 
     #[error("peer returned no block for {0:?}")]
     NoBlockReturned(Point),

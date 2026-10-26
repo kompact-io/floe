@@ -291,6 +291,11 @@ pub fn tip(conn: &Connection) -> Result<Option<(u64, [u8; 32])>> {
 /// chain-sync just rolls forward again from there, redoing a little
 /// already-buffered-but-uncommitted work -- never a "continuity violation"
 /// against its own resume point.
+///
+/// `rollback` clears this row rather than leaving it pointing at a block
+/// it just deleted: once cleared, `resolve_resume` falls back to `tip()` +
+/// a fresh `fetch_header_via_blockfetch`, so a resume point can never
+/// outlive the row it was derived from.
 pub fn get_resume_header(conn: &Connection) -> Result<Option<Vec<u8>>> {
     Ok(conn
         .query_row("SELECT v FROM meta WHERE k = 'resume_header'", [], |r| {
@@ -486,8 +491,28 @@ pub fn rollback(conn: &mut Connection, p: u64) -> Result<()> {
     tx.execute("DELETE FROM script WHERE slot > ?1", params![p])?;
     tx.execute("DELETE FROM tx WHERE block_slot > ?1", params![p])?;
     tx.execute("DELETE FROM block WHERE slot > ?1", params![p])?;
+    // The deleted rows may be exactly what `resume_header` was cached
+    // from (see `get_resume_header`'s doc) -- clear it so the next
+    // `resolve_resume` re-derives a point from the now-correct `tip()`
+    // instead of offering a `FindIntersect` point for a block this
+    // rollback just discarded.
+    tx.execute("DELETE FROM meta WHERE k = 'resume_header'", [])?;
     tx.commit()?;
     Ok(())
+}
+
+/// The slot of the block just before the current tip -- what `rollback`
+/// must be called with to discard exactly the tip and step back one
+/// block. `None` once there's nothing left before it (down to the seed
+/// anchor's own checkpoint row).
+pub fn previous_tip_slot(conn: &Connection) -> Result<Option<u64>> {
+    Ok(conn
+        .query_row(
+            "SELECT slot FROM block ORDER BY slot DESC LIMIT 1 OFFSET 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?)
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
