@@ -151,7 +151,7 @@ pub fn credentials_from_address(address: &Address) -> Credentials {
             .to_vec()[0];
             (Some(pay_hash), stake_hash, header)
         }
-        Address::Byron(_) | Address::Stake(_) => (None, None, 0),
+        Address::Byron(_) => (None, None, 0),
     }
 }
 

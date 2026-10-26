@@ -39,10 +39,12 @@ impl std::str::FromStr for NetworkArg {
 
 /// Decomposes an address into the hashes `SearchUtxos` matches on --
 /// `Shelley` gives a payment hash plus a delegation hash (only if it
-/// delegates by credential, not pointer); a bare `Stake` address gives
-/// only the delegation hash. Native and wasm (`wasm::decode_address`)
-/// share this, so both see the same addresses the same way -- no
-/// wasm-only special case for `Stake`.
+/// delegates by credential, not pointer). `amaru_kernel::address::Address`
+/// has no bare reward/stake-address variant (those are a separate
+/// `RewardAccount` type, not addressable here), so floe has nothing to
+/// decompose a bare stake address into. Native and wasm
+/// (`wasm::decode_address`) share this, so both see the same addresses
+/// the same way.
 pub fn address_hashes(
     addr: &amaru_kernel::address::Address,
 ) -> crate::Result<(Option<Hash28>, Option<Hash28>)> {
@@ -61,7 +63,6 @@ pub fn address_hashes(
             };
             Ok((Some(pay_hash), stake_hash))
         }
-        Address::Stake(s) => Ok((None, Some(hash28(s.credential().as_hash())))),
         Address::Byron(_) => Err(crate::Error::msg(
             "address has no hash floe could have indexed (Byron)",
         )),
