@@ -51,6 +51,7 @@ schemars = "1.2.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tar = "0.4"
+thiserror = "2"
 tikv-jemallocator = "0.7.0"
 tikv-jemalloc-ctl = "0.7.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
@@ -58,13 +59,15 @@ tonic = "0.14"
 tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# wasm32-only (floe-client's `wasm` feature). `wasm-bindgen` pinned to
-# match nixpkgs' `wasm-bindgen-cli` exactly (currently 0.2.127) -- bump
-# both together, or glue generation fails outright.
+# wasm32-only. `wasm-bindgen` pinned to match nixpkgs' `wasm-bindgen-cli`
+# exactly (currently 0.2.127) -- bump both together, or glue generation
+# fails outright.
+gloo-net = { version = "0.6", default-features = false, features = ["http"] }
 js-sys = "0.3"
 wasm-bindgen = "=0.2.129" # must match nix
+# Not called directly -- `#[wasm_bindgen]`'s own macro expansion on an
+# async method needs this crate name in scope (`future_to_promise`).
 wasm-bindgen-futures = "0.4"
-web-sys = "0.3"
 zstd = "0.14"
 
 # WORKSPACE #

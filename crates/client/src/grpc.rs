@@ -5,8 +5,9 @@
 //! in this crate: converting between `floe-dto-grpc`'s prost types and
 //! the same `floe-dto-http` DTOs every scheme takes/returns.
 
-use anyhow::Result;
 use tonic::transport::{Channel, ClientTlsConfig};
+
+use crate::error::{Error, Result};
 
 use floe_dto_grpc::floe::v1::cardano as c;
 use floe_dto_grpc::floe::v1::health as h;
@@ -37,7 +38,8 @@ impl Client {
         // without TLS enabled". Default (webpki) roots, no client
         // cert -- same trust story as `http_json`/`http_cbor`'s
         // `reqwest` transport.
-        let mut endpoint = Channel::from_shared(server.to_string())?;
+        let mut endpoint = Channel::from_shared(server.to_string())
+            .map_err(|e| Error::msg(format!("invalid gRPC address {server:?}: {e}")))?;
         if server.starts_with("https://") {
             endpoint = endpoint.tls_config(ClientTlsConfig::new().with_enabled_roots())?;
         }
@@ -71,7 +73,7 @@ fn scheme_dto(s: i32) -> hh::Scheme {
 fn health_response_dto(resp: h::HealthResponse) -> Result<hh::HealthResponse> {
     let h::health_response::Mode::Run(r) = resp
         .mode
-        .ok_or_else(|| anyhow::anyhow!("HealthResponse has no mode"))?;
+        .ok_or_else(|| Error::msg("HealthResponse has no mode"))?;
     Ok(hh::HealthResponse::Run(hh::RunHealth {
         stage: stage_dto(r.stage),
         tip_slot: r.tip_slot,
@@ -79,7 +81,7 @@ fn health_response_dto(resp: h::HealthResponse) -> Result<hh::HealthResponse> {
         tip_hash: r
             .tip_hash
             .try_into()
-            .map_err(|_| anyhow::anyhow!("RunHealth.tip_hash must be 32 bytes"))?,
+            .map_err(|_| Error::msg("RunHealth.tip_hash must be 32 bytes"))?,
         peer_tip_block_no: r.peer_tip_block_no,
     }))
 }
@@ -155,7 +157,7 @@ fn datum_dto(d: Option<c::Datum>) -> Result<Option<hc::Datum>> {
             hash: d
                 .hash
                 .try_into()
-                .map_err(|_| anyhow::anyhow!("Datum.hash must be 32 bytes"))?,
+                .map_err(|_| Error::msg("Datum.hash must be 32 bytes"))?,
             original_cbor: d.original_cbor,
         })
     })
@@ -199,7 +201,7 @@ fn script_dto(s: Option<c::Script>) -> Option<hc::Script> {
 fn address_dto(bytes: &[u8]) -> Result<hq::Address> {
     Ok(hq::Address(
         amaru_kernel::address::Address::from_bytes(bytes)
-            .ok_or_else(|| anyhow::anyhow!("invalid address bytes"))?,
+            .ok_or_else(|| Error::msg("invalid address bytes"))?,
     ))
 }
 
@@ -216,19 +218,19 @@ fn tx_output_dto(out: c::TxOutput) -> Result<hc::TxOutput> {
 fn utxo_dto(item: q::AnyUtxoData) -> Result<hq::Utxo> {
     let txo_ref = item
         .txo_ref
-        .ok_or_else(|| anyhow::anyhow!("AnyUtxoData has no txo_ref"))?;
+        .ok_or_else(|| Error::msg("AnyUtxoData has no txo_ref"))?;
     let tx_hash: TxHash = txo_ref
         .hash
         .try_into()
-        .map_err(|_| anyhow::anyhow!("TxoRef.hash must be 32 bytes"))?;
+        .map_err(|_| Error::msg("TxoRef.hash must be 32 bytes"))?;
     let q::any_utxo_data::ParsedState::Cardano(out) = item
         .parsed_state
-        .ok_or_else(|| anyhow::anyhow!("AnyUtxoData has no parsed_state"))?;
+        .ok_or_else(|| Error::msg("AnyUtxoData has no parsed_state"))?;
     let spent_by = item
         .spent_by
         .map(|h| -> Result<TxHash> {
             h.try_into()
-                .map_err(|_| anyhow::anyhow!("spent_by must be 32 bytes"))
+                .map_err(|_| Error::msg("spent_by must be 32 bytes"))
         })
         .transpose()?;
     Ok(hq::Utxo {
@@ -250,10 +252,10 @@ fn tx_dto(tx_hash: TxHash, block: Option<q::ChainPoint>, t: c::Tx) -> Result<hq:
             let prev_hash: TxHash = i
                 .tx_hash
                 .try_into()
-                .map_err(|_| anyhow::anyhow!("TxInput.tx_hash must be 32 bytes"))?;
+                .map_err(|_| Error::msg("TxInput.tx_hash must be 32 bytes"))?;
             let out = i
                 .as_output
-                .ok_or_else(|| anyhow::anyhow!("TxInput has no as_output"))?;
+                .ok_or_else(|| Error::msg("TxInput has no as_output"))?;
             Ok(hc::TxInput {
                 tx_hash: prev_hash,
                 output_index: i.output_index as u16,
@@ -397,7 +399,7 @@ impl Backend for Client {
                         key: v
                             .key
                             .try_into()
-                            .map_err(|_| anyhow::anyhow!("AnyChainDatum.key must be 32 bytes"))?,
+                            .map_err(|_| Error::msg("AnyChainDatum.key must be 32 bytes"))?,
                     },
                     ledger_tip: chain_point_dto(resp.ledger_tip),
                 }))
@@ -421,7 +423,7 @@ impl Backend for Client {
                 let Some(tx) = resp.tx else { return Ok(None) };
                 let q::any_chain_tx::Chain::Cardano(t) = tx
                     .chain
-                    .ok_or_else(|| anyhow::anyhow!("AnyChainTx has no chain"))?;
+                    .ok_or_else(|| Error::msg("AnyChainTx has no chain"))?;
                 Ok(Some(hq::ReadTxResponse {
                     tx: tx_dto(req.hash, tx.block_ref, t)?,
                     ledger_tip: chain_point_dto(resp.ledger_tip),

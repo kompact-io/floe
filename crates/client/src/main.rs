@@ -55,7 +55,7 @@ enum Command {
     },
     /// UTxOs matching an address pattern (`SearchUtxos`). `--address`
     /// (bech32 or hex) is decomposed into `--pay-hash`/`--stake-hash`
-    /// client-side (`floe_client::shelley_hashes`) -- same as the
+    /// client-side (`floe_client::address_hashes`) -- same as the
     /// server's own storage; give those directly instead to skip the
     /// decomposition. No network check against the server here -- a
     /// hash from the wrong network just won't match anything.
@@ -162,19 +162,16 @@ async fn dispatch<B: Backend>(client: &mut B, cmd: Command) -> Result<Output> {
                 let addr: Address = address
                     .parse()
                     .map_err(|_| anyhow::anyhow!("invalid address: {address}"))?;
-                floe_client::shelley_hashes(&addr)?
+                floe_client::address_hashes(&addr)?
+            } else if pay_hash.is_some() || stake_hash.is_some() {
+                (pay_hash, stake_hash)
             } else {
-                (
-                    pay_hash.ok_or_else(|| {
-                        anyhow::anyhow!("need --address or --pay-hash/--stake-hash")
-                    })?,
-                    stake_hash,
-                )
+                anyhow::bail!("need --address or --pay-hash/--stake-hash");
             };
             Ok(Output::SearchUtxos(
                 client
                     .search_utxos(SearchUtxosRequest {
-                        pay_hash: Some(pay_hash),
+                        pay_hash,
                         stake_hash,
                         since_slot,
                         since_hash,

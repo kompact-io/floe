@@ -37,25 +37,35 @@ impl std::str::FromStr for NetworkArg {
     }
 }
 
-/// Decomposes a `Shelley` address into its parts.
-pub fn shelley_hashes(
+/// Decomposes an address into the hashes `SearchUtxos` matches on --
+/// `Shelley` gives a payment hash plus a delegation hash (only if it
+/// delegates by credential, not pointer); a bare `Stake` address gives
+/// only the delegation hash. Native and wasm (`wasm::decode_address`)
+/// share this, so both see the same addresses the same way -- no
+/// wasm-only special case for `Stake`.
+pub fn address_hashes(
     addr: &amaru_kernel::address::Address,
-) -> anyhow::Result<(Hash28, Option<Hash28>)> {
+) -> crate::Result<(Option<Hash28>, Option<Hash28>)> {
     use amaru_kernel::AsHash;
     use amaru_kernel::address::{Address, StakeReference};
 
-    let Address::Shelley(s) = addr else {
-        anyhow::bail!("address has no payment hash floe could have indexed (Byron/Stake)");
-    };
     let hash28 = |h: amaru_kernel::Hash<28>| -> Hash28 {
         h.as_ref().try_into().expect("Hash<28> is 28 bytes")
     };
-    let pay_hash = hash28(s.payment().as_hash());
-    let stake_hash = match s.delegation() {
-        Some(StakeReference::Credential(c)) => Some(hash28(c.as_hash())),
-        Some(StakeReference::Pointer(_)) | None => None,
-    };
-    Ok((pay_hash, stake_hash))
+    match addr {
+        Address::Shelley(s) => {
+            let pay_hash = hash28(s.payment().as_hash());
+            let stake_hash = match s.delegation() {
+                Some(StakeReference::Credential(c)) => Some(hash28(c.as_hash())),
+                Some(StakeReference::Pointer(_)) | None => None,
+            };
+            Ok((Some(pay_hash), stake_hash))
+        }
+        Address::Stake(s) => Ok((None, Some(hash28(s.credential().as_hash())))),
+        Address::Byron(_) => Err(crate::Error::msg(
+            "address has no hash floe could have indexed (Byron)",
+        )),
+    }
 }
 
 /// Surface of `Floe`: one method per RPC, taking/returning the exact
@@ -67,29 +77,29 @@ pub trait Backend {
     async fn read_utxos(
         &mut self,
         req: floe_dto_http::query::ReadUtxosRequest,
-    ) -> anyhow::Result<floe_dto_http::query::ReadUtxosResponse>;
+    ) -> crate::Result<floe_dto_http::query::ReadUtxosResponse>;
 
     async fn search_utxos(
         &mut self,
         req: floe_dto_http::query::SearchUtxosRequest,
-    ) -> anyhow::Result<floe_dto_http::query::SearchUtxosResponse>;
+    ) -> crate::Result<floe_dto_http::query::SearchUtxosResponse>;
 
     /// `None` on a 404/`NotFound` -- absent, not a wiring failure.
     async fn read_data(
         &mut self,
         req: floe_dto_http::query::ReadDataRequest,
-    ) -> anyhow::Result<Option<floe_dto_http::query::ReadDataResponse>>;
+    ) -> crate::Result<Option<floe_dto_http::query::ReadDataResponse>>;
 
     /// Same not-found convention as `read_data`.
     async fn read_tx(
         &mut self,
         req: floe_dto_http::query::ReadTxRequest,
-    ) -> anyhow::Result<Option<floe_dto_http::query::ReadTxResponse>>;
+    ) -> crate::Result<Option<floe_dto_http::query::ReadTxResponse>>;
 
     async fn submit_tx(
         &mut self,
         raw: Vec<u8>,
-    ) -> anyhow::Result<floe_dto_http::submit::SubmitTxResponse>;
+    ) -> crate::Result<floe_dto_http::submit::SubmitTxResponse>;
 
     /// Not every deployment exposes this over every scheme (an
     /// `http-json`/`http-cbor` client only sees it if the query
@@ -97,8 +107,8 @@ pub trait Backend {
     /// an address) -- callers that want to probe for support, not
     /// require it, should treat `Err` as "unsupported here", not a
     /// wiring failure.
-    async fn get_health(&mut self) -> anyhow::Result<floe_dto_http::health::HealthResponse>;
+    async fn get_health(&mut self) -> crate::Result<floe_dto_http::health::HealthResponse>;
 
     /// Same availability caveat as `get_health`.
-    async fn get_metrics(&mut self) -> anyhow::Result<floe_dto_http::health::MetricsResponse>;
+    async fn get_metrics(&mut self) -> crate::Result<floe_dto_http::health::MetricsResponse>;
 }

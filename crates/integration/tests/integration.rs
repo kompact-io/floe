@@ -418,12 +418,12 @@ async fn assert_full_round_trip<B: Backend>(client: &mut B) {
         .to_bech32()
         .unwrap();
     let addr: Address = bech32.parse().unwrap();
-    let (pay_hash, stake_hash) = floe_client::shelley_hashes(&addr).unwrap();
-    assert_eq!(pay_hash, PAY_HASH);
+    let (pay_hash, stake_hash) = floe_client::address_hashes(&addr).unwrap();
+    assert_eq!(pay_hash, Some(PAY_HASH));
     assert_eq!(stake_hash, None);
     let page = client
         .search_utxos(SearchUtxosRequest {
-            pay_hash: Some(pay_hash),
+            pay_hash,
             stake_hash,
             since_slot: None,
             since_hash: None,
@@ -516,7 +516,7 @@ async fn http_json_backend_full_round_trip() {
     let db = TempDb::create();
     seed(db.path());
     let server = ServerProc::spawn(db.path());
-    let mut client = floe_client::http_json::Client::connect(&server.http_json_addr)
+    let mut client = floe_client::http::json::Client::connect(&server.http_json_addr)
         .await
         .unwrap();
     assert_full_round_trip(&mut client).await;
@@ -527,7 +527,7 @@ async fn http_cbor_backend_full_round_trip() {
     let db = TempDb::create();
     seed(db.path());
     let server = ServerProc::spawn(db.path());
-    let mut client = floe_client::http_cbor::Client::connect(&server.http_cbor_addr)
+    let mut client = floe_client::http::cbor::Client::connect(&server.http_cbor_addr)
         .await
         .unwrap();
     assert_full_round_trip(&mut client).await;
@@ -549,7 +549,7 @@ async fn tx_lookup_agrees_across_schemes() {
     let mut grpc = floe_client::grpc::Client::connect(&format!("http://{}", server.addr))
         .await
         .unwrap();
-    let mut http = floe_client::http_json::Client::connect(&server.http_json_addr)
+    let mut http = floe_client::http::json::Client::connect(&server.http_json_addr)
         .await
         .unwrap();
 

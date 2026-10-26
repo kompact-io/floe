@@ -6,7 +6,7 @@
 // `floe_dto_http::ser_hex`/`de_hex_array`), not anything bespoke to this
 // page.
 
-import init, { WasmClient, decodeAddress } from './pkg/floe_client.js';
+import init, { WasmClient, WasmScheme, decodeAddress } from './pkg/floe_client.js';
 
 const rpcSelect = document.getElementById('rpc');
 const runButton = document.getElementById('run');
@@ -92,7 +92,7 @@ async function main() {
   // `""` = same-origin root; Caddy proxies `/query/*` from there to
   // floe-server. Loading the wasm module says nothing about whether
   // that proxy/server is actually reachable -- only a RUN attempt does.
-  window.floeClient = new WasmClient('');
+  window.floeClient = new WasmClient('', WasmScheme.Json);
   wasmBadge.remove();
   runButton.disabled = false;
 

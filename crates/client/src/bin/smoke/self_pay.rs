@@ -28,6 +28,12 @@ impl From<anyhow::Error> for SelfPayError {
     }
 }
 
+impl From<floe_client::Error> for SelfPayError {
+    fn from(e: floe_client::Error) -> Self {
+        SelfPayError::Other(e.into())
+    }
+}
+
 pub enum SelfPayResult {
     #[allow(dead_code)]
     // `run(.., submit: false)` builds but never submits -- unused by smoke today, kept for completeness.

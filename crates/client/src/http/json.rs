@@ -1,14 +1,11 @@
-//! http_json: the JSON wire format over `http_common`'s pooled
-//! `reqwest::Client` -- `Accept: application/json`,
-//! `Content-Type: application/json`, `serde_json`/`floe-dto-http`'s
-//! `Serialize`/`Deserialize` derives for both the request and the
-//! response.
+//! JSON scheme: `Accept`/`Content-Type: application/json` over
+//! `common::Client`. `wasm::WasmClient` wraps this directly.
 
-use anyhow::{Context, Result};
+use crate::Result;
 
+use super::common;
+use super::json_wire::decode;
 use crate::common::Backend;
-use crate::http_common;
-use crate::json_wire::decode;
 use floe_dto_http::health::{HEALTH_PATH, HealthResponse, METRICS_PATH, MetricsResponse};
 use floe_dto_http::query::{
     ReadDataRequest, ReadDataResponse, ReadTxRequest, ReadTxResponse, ReadUtxosRequest,
@@ -16,73 +13,69 @@ use floe_dto_http::query::{
 };
 use floe_dto_http::submit::SubmitTxResponse;
 
+#[derive(Clone)]
 pub struct Client {
-    http: reqwest::Client,
+    http: common::Client,
     base: String,
 }
 
 impl Client {
-    /// Mirrors `grpc::Client::connect`'s shape (`async fn(&str) ->
-    /// Result<Self>`) even though building a pooled `reqwest::Client`
-    /// does no I/O itself -- every scheme's `Client` connects the same
-    /// way from `scheme::connect`'s point of view, so a future retry/
-    /// readiness wait here (matching gRPC's own) wouldn't change the
-    /// call site.
+    /// `async fn(&str) -> Result<Self>` to mirror `grpc::Client::connect`
+    /// even though it does no I/O.
     pub async fn connect(server: &str) -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .build()
-            .context("building the HTTP client")?;
+        Self::new(server)
+    }
+
+    /// Sync counterpart of `connect`, for callers (`wasm::WasmClient`'s
+    /// constructor) that can't be `async`.
+    pub(crate) fn new(server: &str) -> Result<Self> {
         Ok(Self {
-            http,
-            base: http_common::base_url(server),
+            http: common::Client::new()?,
+            base: common::base_url(server),
         })
     }
 
     async fn fetch<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
-        let (status, body) =
-            http_common::get(&self.http, &self.base, path, "application/json").await?;
+        let (status, body) = self.http.get(&self.base, path, "application/json").await?;
         decode(status, &body)
     }
 
-    /// POSTs `req` as a JSON body and decodes the response the same
-    /// way -- every `/query`/`/submit` RPC's shape (see
-    /// `http_common::post`'s own doc).
     async fn request<Req: serde::Serialize, Resp: serde::de::DeserializeOwned>(
         &self,
         path: &str,
         req: &Req,
     ) -> Result<Resp> {
         let body = serde_json::to_vec(req)?;
-        let (status, body) = http_common::post(
-            &self.http,
-            &self.base,
-            path,
-            &body,
-            "application/json",
-            "application/json",
-        )
-        .await?;
+        let (status, body) = self
+            .http
+            .post(
+                &self.base,
+                path,
+                &body,
+                "application/json",
+                "application/json",
+            )
+            .await?;
         decode(status, &body)
     }
 
-    /// Like `request`, but a 404 is `Ok(None)` instead of `Err` -- for
-    /// `read_tx`/`read_data`, whose `Backend` signature reports "not
-    /// found" that way.
+    /// 404 -> `Ok(None)`, for `read_tx`/`read_data`.
     async fn request_opt<Req: serde::Serialize, Resp: serde::de::DeserializeOwned>(
         &self,
         path: &str,
         req: &Req,
     ) -> Result<Option<Resp>> {
         let body = serde_json::to_vec(req)?;
-        let (status, body) = http_common::post(
-            &self.http,
-            &self.base,
-            path,
-            &body,
-            "application/json",
-            "application/json",
-        )
-        .await?;
+        let (status, body) = self
+            .http
+            .post(
+                &self.base,
+                path,
+                &body,
+                "application/json",
+                "application/json",
+            )
+            .await?;
         if status == 404 {
             return Ok(None);
         }
@@ -112,15 +105,16 @@ impl Backend for Client {
     }
 
     async fn submit_tx(&mut self, raw: Vec<u8>) -> Result<SubmitTxResponse> {
-        let (status, body) = http_common::post(
-            &self.http,
-            &self.base,
-            floe_dto_http::submit::SUBMIT_TX_PATH,
-            &raw,
-            "application/cbor",
-            "application/json",
-        )
-        .await?;
+        let (status, body) = self
+            .http
+            .post(
+                &self.base,
+                floe_dto_http::submit::SUBMIT_TX_PATH,
+                &raw,
+                "application/cbor",
+                "application/json",
+            )
+            .await?;
         decode(status, &body)
     }
 

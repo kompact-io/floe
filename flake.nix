@@ -105,7 +105,7 @@
           pname = "floe-client-wasm";
           version = "0.1.0";
           CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
-          cargoExtraArgs = "--locked -p floe-client --lib --no-default-features --features wasm";
+          cargoExtraArgs = "--locked -p floe-client --lib --no-default-features --features http-json,http-cbor";
           # Default checkPhase runs the test binary on the build host --
           # impossible for a wasm32 artifact (no runtime here).
           doCheck = false;
@@ -145,7 +145,11 @@
           program = "${native.floe}/bin/floe";
         };
 
-        checks = native.checks // { fmt = (crane.mkLib pkgs).cargoFmt { inherit src; }; };
+        checks = native.checks // {
+          fmt = (crane.mkLib pkgs).cargoFmt { inherit src; };
+          # Was packages-only; add so CI actually builds the wasm32 target.
+          inherit floe-client-wasm;
+        };
 
         devShells.default = native.craneLib.devShell {
           checks = self.checks.${system};

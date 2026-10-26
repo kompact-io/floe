@@ -16,14 +16,14 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "floe-client"
 path = "src/main.rs"
-required-features = ["clap", "tracing", "serde_json"]
+required-features = ["clap", "tracing", "serde_json", "anyhow"]
 
 # Deployment smoke test against a running `floe-server`, see
 # `src/bin/smoke/main.rs`.
 [[bin]]
 name = "floe-smoke"
 path = "src/bin/smoke/main.rs"
-required-features = ["clap", "tracing", "serde_json"]
+required-features = ["clap", "tracing", "serde_json", "anyhow"]
 
 # Basic ongoing read traffic against a running `floe-server`, for
 # dashboard eyeballing -- not a load-testing tool, see
@@ -31,14 +31,15 @@ required-features = ["clap", "tracing", "serde_json"]
 [[bin]]
 name = "floe-traffic"
 path = "src/bin/traffic/main.rs"
-required-features = ["clap", "tracing", "serde_json"]
+required-features = ["clap", "tracing", "serde_json", "anyhow"]
 
 [features]
-# `clap`/`tracing` are bin-only (parsed args, logging) -- `lib.rs` never
-# touches either, so a lib consumer doing `default-features = false,
-# features = ["grpc"]` (etc.) pulls neither in. Both get an implicit
-# feature of their own name from being optional deps, same as `serde_json`.
-default = ["grpc", "http-json", "http-cbor", "clap", "tracing", "serde_json"]
+# `clap`/`tracing`/`anyhow` are bin-only -- `lib.rs` never touches any
+# of them (the lib's own errors are `crate::Error`, see `error.rs`), so
+# a lib consumer doing `default-features = false, features = ["grpc"]`
+# (etc.) pulls none in. Each gets an implicit feature of its own name
+# from being an optional dep, same as `serde_json`.
+default = ["grpc", "http-json", "http-cbor", "clap", "tracing", "serde_json", "anyhow"]
 grpc = ["dep:floe-dto-grpc", "dep:tonic"]
 # `serde_json` is a genuine lib dependency under this feature --
 # `http_json.rs` itself encodes/decodes with it, not just the bins'
@@ -51,16 +52,10 @@ http-cbor = ["dep:reqwest"]
 # Bundles both logging deps under one name (each optional dep's own
 # implicit feature only covers itself) -- bin-only, see `lib.rs`.
 tracing = ["dep:tracing", "dep:tracing-subscriber"]
-# wasm32-only: `wasm.rs`/`wasm/*.rs`'s fetch-backed `Backend` +
-# `#[wasm_bindgen]` wrapper. Pulls `serde_json` directly, not `http-json`
-# -- `http_json`/`http_common` are `reqwest`-backed (via `tokio`'s
-# `net` -> `mio`), neither of which builds for wasm32. The four `dep:`
-# deps are themselves wasm32-gated below, so enabling this on a native
-# build is a no-op.
-wasm = ["serde_json", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sys"]
 
 [dependencies]
-anyhow = { workspace = true }
+# Bin-only (see `[features]`'s doc comment) -- the lib uses `crate::Error`.
+anyhow = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 floe-dto-grpc = { workspace = true, optional = true }
 # `json`/`cbor`/`metrics` unconditionally, mirroring `floe-server`'s own
@@ -72,6 +67,7 @@ minicbor = { workspace = true }
 amaru-kernel = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, optional = true }
+thiserror = { workspace = true }
 # `tls-ring`/`tls-webpki-roots`: `grpc::Client::connect`'s `Endpoint`
 # auto-enables TLS with the default webpki roots the moment the given
 # URL's scheme is `https` (tonic's own `Endpoint::from_shared`, no code
@@ -85,25 +81,19 @@ tonic = { workspace = true, features = ["tls-ring", "tls-webpki-roots"], optiona
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 
-# wasm32-only: cfg'd out of existence on native, not just unused.
+# wasm32 targeting browser only
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-js-sys = { workspace = true, optional = true }
-wasm-bindgen = { workspace = true, optional = true }
-wasm-bindgen-futures = { workspace = true, optional = true }
-web-sys = { workspace = true, optional = true, features = [
-  "Headers",
-  "Request",
-  "RequestInit",
-  "Response",
-  "Window",
-] }
+gloo-net = { workspace = true }
+js-sys = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
 
 # Non-wasm only: `tokio`'s `net` -> `mio` doesn't build for wasm32, so
 # this can't be feature-gated away, only target-gated. `signal` is
 # extra on top of the workspace default, only for `floe-traffic`'s own
-# Ctrl-C handling. `reqwest` backs `http_json.rs`/`http_cbor.rs`'s
-# transport (`wasm::transport`'s browser `fetch` covers wasm32
-# instead, see its own module doc).
+# Ctrl-C handling. `reqwest` backs `http_common.rs`'s native transport;
+# `gloo-net` (above) is its wasm32 substitute, same module.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 reqwest = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["signal"] }

@@ -148,7 +148,9 @@ fn report(step: &Step) {
 }
 
 /// `--pay-hash` wins outright; otherwise `--address`/`--skey`'s
-/// address is decomposed via `shelley_hashes`.
+/// address is decomposed via `address_hashes` -- this tool's self-pay
+/// flow needs a payment hash, so a bare `Stake` address (no payment
+/// part) is rejected here, unlike the CLI's own `search-utxos`.
 fn resolve_hash(cli: &Cli) -> Result<(Hash28, Option<Hash28>)> {
     if let Some(pay_hash) = cli.pay_hash {
         return Ok((pay_hash, cli.stake_hash));
@@ -165,7 +167,11 @@ fn resolve_hash(cli: &Cli) -> Result<(Hash28, Option<Hash28>)> {
     } else {
         anyhow::bail!("need one of --pay-hash, --address, or --skey to know what to search for");
     };
-    floe_client::shelley_hashes(&address)
+    let (pay_hash, stake_hash) = floe_client::address_hashes(&address)?;
+    Ok((
+        pay_hash.ok_or_else(|| anyhow::anyhow!("address has no payment hash (Byron/Stake)"))?,
+        stake_hash,
+    ))
 }
 
 /// One scheme's results, for cross-scheme comparison in `main`.

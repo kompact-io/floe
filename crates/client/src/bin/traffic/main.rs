@@ -94,9 +94,10 @@ struct Cli {
 }
 
 /// `--pay-hash` wins outright; otherwise `--address`/`--skey`'s
-/// address is decomposed via `shelley_hashes`. Mirrors `floe-smoke`'s
+/// address is decomposed via `address_hashes`. Mirrors `floe-smoke`'s
 /// own `resolve_hash` -- not shared, since each bin compiles
-/// independently.
+/// independently. This tool walks by payment hash, so a bare `Stake`
+/// address (no payment part) is rejected here.
 fn resolve_hash(cli: &Cli) -> Result<Hash28> {
     if let Some(pay_hash) = cli.pay_hash {
         return Ok(pay_hash);
@@ -113,7 +114,9 @@ fn resolve_hash(cli: &Cli) -> Result<Hash28> {
     } else {
         anyhow::bail!("need one of --pay-hash, --address, or --skey to know what to search for");
     };
-    floe_client::shelley_hashes(&address).map(|(pay, _stake)| pay)
+    floe_client::address_hashes(&address)?
+        .0
+        .ok_or_else(|| anyhow::anyhow!("address has no payment hash (Byron/Stake)"))
 }
 
 /// Round-robins through the basic read endpoints. `ReadUtxos`/`ReadTx`
@@ -288,9 +291,9 @@ async fn fire(
                         .inputs
                         .first()
                         .and_then(|input| {
-                            floe_client::shelley_hashes(&input.as_output.address.0).ok()
+                            floe_client::address_hashes(&input.as_output.address.0).ok()
                         })
-                        .map(|(pay, _stake)| pay)
+                        .and_then(|(pay, _stake)| pay)
                         .unwrap_or(state.origin_pay_hash);
                     debug!(%scheme, endpoint = endpoint.name(), next_pay_hash = %hex::encode(state.walk_pay_hash), "ok");
                     report(true);

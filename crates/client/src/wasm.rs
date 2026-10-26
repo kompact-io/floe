@@ -1,26 +1,52 @@
-//! wasm: `#[wasm_bindgen]`-facing surface, `wasm32`+`wasm` feature only.
-//! Everything wasm-only lives here or under `wasm/`.
+//! wasm: `#[wasm_bindgen]`-facing surface, wasm32 only. Wraps
+//! `http::AnyHttpClient`, picked at JS-instantiation time by
+//! `WasmScheme` rather than a compile-time choice -- both
+//! `http-json`/`http-cbor` can be compiled in at once. The JS-facing
+//! methods always take/return JSON strings regardless of which wire
+//! format talks to the server.
 //!
-//! Methods take/return JSON strings (demo JS does `JSON.stringify`/
-//! `parse`), not `serde-wasm-bindgen` `JsValue`s -- same shape as
-//! `floe_dto_http::query::*`. Errors are the `anyhow::Error`'s message
-//! as a JS exception string; fine for a demo console.
-
-mod transport;
+//! Errors are the `crate::Error`'s message as a JS exception string;
+//! fine for a demo console.
 
 use wasm_bindgen::prelude::*;
 
-use crate::common::Backend;
+use crate::Backend;
+use crate::http::AnyHttpClient;
+
+/// JS-facing scheme selector for `WasmClient::new` -- a real enum, not
+/// a `&str`, so a typo is a JS compile/lint-time type error (TS union),
+/// not a runtime one.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug)]
+pub enum WasmScheme {
+    Json,
+    Cbor,
+}
 
 /// One per instance, pointed at `base` (`""` = same-origin root).
 #[wasm_bindgen]
-pub struct WasmClient(transport::Client);
+pub struct WasmClient(AnyHttpClient);
 
 #[wasm_bindgen]
 impl WasmClient {
+    /// Sync, not `connect` -- a JS `new` can't await (and neither
+    /// scheme does any I/O here anyway, see
+    /// `http::json::Client::connect`'s doc).
     #[wasm_bindgen(constructor)]
-    pub fn new(base: &str) -> Self {
-        Self(transport::Client::new(base))
+    pub fn new(base: &str, scheme: WasmScheme) -> Result<Self, String> {
+        let client = match scheme {
+            #[cfg(feature = "http-json")]
+            WasmScheme::Json => AnyHttpClient::Json(
+                crate::http::json::Client::new(base).map_err(|e| e.to_string())?,
+            ),
+            #[cfg(feature = "http-cbor")]
+            WasmScheme::Cbor => AnyHttpClient::Cbor(
+                crate::http::cbor::Client::new(base).map_err(|e| e.to_string())?,
+            ),
+            #[allow(unreachable_patterns)]
+            other => return Err(format!("scheme {other:?} not compiled in")),
+        };
+        Ok(Self(client))
     }
 
     #[wasm_bindgen(js_name = readUtxos)]
@@ -80,27 +106,18 @@ struct DecodedAddress {
     stake_hash: Option<String>,
 }
 
-/// JS counterpart of `--address` on the CLI. `shelley_hashes` only
-/// covers payment addresses, so `Stake` is decomposed here instead.
+/// JS counterpart of `--address` on the CLI -- `address_hashes` is
+/// shared with native, so a `Stake` address decodes the same way here
+/// as it would there.
 #[wasm_bindgen(js_name = decodeAddress)]
 pub fn decode_address(address: String) -> Result<String, String> {
     let addr: amaru_kernel::address::Address = address
         .parse()
         .map_err(|_| format!("invalid address: {address}"))?;
-    let decoded = match &addr {
-        amaru_kernel::address::Address::Stake(stake) => DecodedAddress {
-            pay_hash: None,
-            stake_hash: Some(hex::encode(amaru_kernel::AsHash::as_hash(
-                &stake.credential(),
-            ))),
-        },
-        _ => {
-            let (pay_hash, stake_hash) = crate::shelley_hashes(&addr).map_err(|e| e.to_string())?;
-            DecodedAddress {
-                pay_hash: Some(hex::encode(pay_hash)),
-                stake_hash: stake_hash.map(hex::encode),
-            }
-        }
+    let (pay_hash, stake_hash) = crate::address_hashes(&addr).map_err(|e| e.to_string())?;
+    let decoded = DecodedAddress {
+        pay_hash: pay_hash.map(hex::encode),
+        stake_hash: stake_hash.map(hex::encode),
     };
     serde_json::to_string(&decoded).map_err(|e| e.to_string())
 }
