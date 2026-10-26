@@ -36,7 +36,7 @@ dependencies = [
 [[package]]
 name = "amaru-curve25519-dalek"
 version = "3.2.0"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "byteorder",
  "digest 0.9.0",
@@ -48,7 +48,7 @@ dependencies = [
 [[package]]
 name = "amaru-deps"
 version = "0.0.0"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "bitflags",
  "blst",
@@ -152,7 +152,7 @@ dependencies = [
 [[package]]
 name = "amaru-kernel"
 version = "0.1.2"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "amaru-deps",
  "amaru-minicbor-extra",
@@ -184,7 +184,7 @@ dependencies = [
 [[package]]
 name = "amaru-kes-summed-ed25519"
 version = "0.2.1"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "blake2 0.10.6",
  "ed25519-dalek 2.2.0",
@@ -195,7 +195,7 @@ dependencies = [
 [[package]]
 name = "amaru-metrics"
 version = "0.1.2"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "amaru-deps",
  "opentelemetry",
@@ -205,7 +205,7 @@ dependencies = [
 [[package]]
 name = "amaru-minicbor-extra"
 version = "0.1.2"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "amaru-deps",
  "anyhow",
@@ -219,7 +219,7 @@ dependencies = [
 [[package]]
 name = "amaru-network"
 version = "0.1.2"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "amaru-deps",
  "amaru-kernel",
@@ -239,7 +239,7 @@ dependencies = [
 [[package]]
 name = "amaru-observability"
 version = "0.1.2"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "amaru-kernel",
  "amaru-observability-macros",
@@ -260,7 +260,7 @@ dependencies = [
 [[package]]
 name = "amaru-observability-macros"
 version = "0.1.2"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "inventory",
  "proc-macro2",
@@ -272,7 +272,7 @@ dependencies = [
 [[package]]
 name = "amaru-ouroboros"
 version = "0.1.2"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "amaru-deps",
  "amaru-kernel",
@@ -293,7 +293,7 @@ dependencies = [
 [[package]]
 name = "amaru-ouroboros-traits"
 version = "0.1.2"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "amaru-deps",
  "amaru-kernel",
@@ -308,7 +308,7 @@ dependencies = [
 [[package]]
 name = "amaru-protocols"
 version = "0.1.2"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "amaru-deps",
  "amaru-kernel",
@@ -330,7 +330,7 @@ dependencies = [
 [[package]]
 name = "amaru-pure-stage"
 version = "0.1.2"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "amaru-deps",
  "anyhow",
@@ -356,7 +356,7 @@ dependencies = [
 [[package]]
 name = "amaru-vrf-dalek"
 version = "0.1.0"
-source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#ac1d53f5bb1a38ab17bf29dc4ea0a2ae6f3a9345"
+source = "git+https://github.com/kompact-io/amaru?branch=nix-proper#c37a6483d9c5c1a94ef030849ed6aecaa86c2839"
 dependencies = [
  "amaru-curve25519-dalek",
  "curve25519-dalek 3.2.0",
